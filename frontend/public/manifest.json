@@ -1,0 +1,41 @@
+{
+  "name": "TerraRisk AI - Kerala Disaster Management Matrix",
+  "short_name": "TerraRisk AI",
+  "description": "Real-time landslide susceptibility forecasting, crowdsourced hazard triage, offline emergency SOS beacon, and relief camp management for Kerala Western Ghats.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0F172A",
+  "theme_color": "#0284C7",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Emergency SOS",
+      "short_name": "SOS",
+      "description": "Transmit cellular distress beacon with GPS coordinates",
+      "url": "/?action=sos",
+      "icons": [{ "src": "/favicon.svg", "sizes": "96x96" }]
+    },
+    {
+      "name": "Check Local Safety",
+      "short_name": "Safety Check",
+      "description": "Evaluate live geological threat at registered residence",
+      "url": "/?action=safety",
+      "icons": [{ "src": "/favicon.svg", "sizes": "96x96" }]
+    },
+    {
+      "name": "Relief Shelters",
+      "short_name": "Shelters",
+      "description": "Locate nearest relief camps with open bed capacity",
+      "url": "/?action=shelters",
+      "icons": [{ "src": "/favicon.svg", "sizes": "96x96" }]
+    }
+  ]
+}

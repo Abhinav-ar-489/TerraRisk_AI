@@ -32,18 +32,6 @@ export default function MobileBottomNav({
 
       <button
         type="button"
-        className="mob-nav-btn mob-nav-btn-highlight"
-        onClick={onReportHazard}
-        title="Report Field Hazard to Authority Triage"
-      >
-        <div className="mob-nav-icon-wrap highlight-wrap">
-          <AlertTriangle size={18} color="#FFFFFF" />
-        </div>
-        <span className="mob-nav-label highlight-label">Report</span>
-      </button>
-
-      <button
-        type="button"
         className={`mob-nav-btn ${planningRoute ? 'active' : ''}`}
         onClick={onSafeRoute}
         disabled={planningRoute}
@@ -57,6 +45,18 @@ export default function MobileBottomNav({
           )}
         </div>
         <span className="mob-nav-label">Evac Route</span>
+      </button>
+
+      <button
+        type="button"
+        className="mob-nav-btn mob-nav-btn-highlight"
+        onClick={onReportHazard}
+        title="Report Field Hazard to Authority Triage"
+      >
+        <div className="mob-nav-icon-wrap highlight-wrap">
+          <AlertTriangle size={18} color="#FFFFFF" />
+        </div>
+        <span className="mob-nav-label highlight-label">Report</span>
       </button>
 
       <button

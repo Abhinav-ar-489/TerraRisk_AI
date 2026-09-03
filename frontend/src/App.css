@@ -7561,7 +7561,7 @@ body::-webkit-scrollbar,
     z-index: 9998 !important;
     width: 100% !important;
     margin: 0 !important;
-    padding: 6px 10px !important;
+    padding: 6px 12px !important;
     height: 48px !important;
     min-height: 48px !important;
     border-radius: 0 0 16px 16px !important;
@@ -7569,11 +7569,12 @@ body::-webkit-scrollbar,
     justify-content: space-between !important;
     align-items: center !important;
     box-sizing: border-box !important;
-    background: rgba(15, 23, 42, 0.88) !important;
-    backdrop-filter: blur(24px) saturate(200%) !important;
-    -webkit-backdrop-filter: blur(24px) saturate(200%) !important;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25) !important;
+    background: var(--glass-bg) !important;
+    backdrop-filter: blur(24px) saturate(180%) !important;
+    -webkit-backdrop-filter: blur(24px) saturate(180%) !important;
+    border-bottom: 1px solid var(--border-color) !important;
+    color: var(--text-primary) !important;
+    box-shadow: var(--shadow) !important;
   }
 
   .header-left-cluster {
@@ -7590,8 +7591,9 @@ body::-webkit-scrollbar,
     align-items: center !important;
     justify-content: center !important;
     border-radius: 10px !important;
-    background: rgba(255, 255, 255, 0.06) !important;
+    background: var(--bg-surface) !important;
     border: 1px solid var(--border-color) !important;
+    color: var(--text-primary) !important;
   }
 
   .btn-menu-label {
@@ -7603,6 +7605,7 @@ body::-webkit-scrollbar,
     letter-spacing: 0.3px !important;
     margin: 0 !important;
     font-weight: 800 !important;
+    color: var(--text-primary) !important;
   }
 
   .header-brand-subtitle {
@@ -7625,8 +7628,9 @@ body::-webkit-scrollbar,
     padding: 2px 8px 2px 2px !important;
     border-radius: 20px !important;
     height: 32px !important;
-    background: rgba(255, 255, 255, 0.08) !important;
+    background: var(--bg-surface) !important;
     border: 1px solid var(--border-color) !important;
+    color: var(--text-primary) !important;
     display: flex !important;
     align-items: center !important;
     gap: 4px !important;
@@ -7646,6 +7650,7 @@ body::-webkit-scrollbar,
     overflow: hidden !important;
     text-overflow: ellipsis !important;
     white-space: nowrap !important;
+    color: var(--text-primary) !important;
   }
 
   .user-role-tag {
@@ -7667,8 +7672,9 @@ body::-webkit-scrollbar,
     display: flex !important;
     align-items: center !important;
     justify-content: center !important;
-    background: rgba(255, 255, 255, 0.06) !important;
+    background: var(--bg-surface) !important;
     border: 1px solid var(--border-color) !important;
+    color: var(--text-primary) !important;
   }
 
   /* 3. Compact Priority Emergency Broadcast Banner */
@@ -7746,7 +7752,8 @@ body::-webkit-scrollbar,
     height: clamp(340px, 48vh, 440px) !important;
     margin: 0 0 10px 0 !important;
     border-radius: 20px !important;
-    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.28) !important;
+    box-shadow: var(--shadow) !important;
+    border: 1px solid var(--border-color) !important;
     position: relative !important;
   }
 
@@ -7770,10 +7777,12 @@ body::-webkit-scrollbar,
     padding: 2px !important;
     gap: 2px !important;
     border-radius: 20px !important;
-    background: rgba(15, 23, 42, 0.85) !important;
-    backdrop-filter: blur(16px) !important;
-    border: 1px solid rgba(255, 255, 255, 0.15) !important;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3) !important;
+    background: var(--glass-bg) !important;
+    backdrop-filter: blur(16px) saturate(180%) !important;
+    -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
+    border: 1px solid var(--border-color) !important;
+    color: var(--text-primary) !important;
+    box-shadow: var(--shadow) !important;
   }
 
   .scope-pill-btn {
@@ -7781,6 +7790,13 @@ body::-webkit-scrollbar,
     font-size: 10px !important;
     gap: 3px !important;
     border-radius: 16px !important;
+    color: var(--text-secondary) !important;
+  }
+
+  .scope-pill-btn.active {
+    background: var(--bg-surface) !important;
+    color: var(--text-primary) !important;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1) !important;
   }
 
   /* Top-Right: GIS Map Layers Trigger */
@@ -7794,10 +7810,12 @@ body::-webkit-scrollbar,
     padding: 5px 9px !important;
     font-size: 10.5px !important;
     border-radius: 16px !important;
-    background: rgba(15, 23, 42, 0.85) !important;
-    backdrop-filter: blur(16px) !important;
-    border: 1px solid rgba(255, 255, 255, 0.15) !important;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3) !important;
+    background: var(--glass-bg) !important;
+    backdrop-filter: blur(16px) saturate(180%) !important;
+    -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
+    border: 1px solid var(--border-color) !important;
+    color: var(--text-primary) !important;
+    box-shadow: var(--shadow) !important;
   }
 
   /* Bottom-Right: GPS Locate Floating Action Button */
@@ -7812,14 +7830,17 @@ body::-webkit-scrollbar,
     padding: 0 11px !important;
     border-radius: 19px !important;
     font-size: 10.5px !important;
-    background: rgba(15, 23, 42, 0.88) !important;
-    backdrop-filter: blur(16px) !important;
-    border: 1px solid rgba(56, 189, 248, 0.4) !important;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4) !important;
+    background: var(--glass-bg) !important;
+    backdrop-filter: blur(16px) saturate(180%) !important;
+    -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
+    border: 1px solid var(--border-color) !important;
+    color: var(--text-primary) !important;
+    box-shadow: var(--shadow) !important;
   }
 
   .gps-fab-label {
     font-size: 10.5px !important;
+    color: var(--text-primary) !important;
   }
 
   /* Bottom-Left: Minimalist Terrain Legend */
@@ -7830,6 +7851,9 @@ body::-webkit-scrollbar,
     border-radius: 8px !important;
     font-size: 8.5px !important;
     max-width: 120px !important;
+    background: var(--glass-bg) !important;
+    border: 1px solid var(--border-color) !important;
+    color: var(--text-primary) !important;
   }
 
   /* GIS Layers Collapsible Mobile Bottom Sheet */
@@ -7837,7 +7861,7 @@ body::-webkit-scrollbar,
     display: block !important;
     position: fixed !important;
     inset: 0 !important;
-    background: rgba(0, 0, 0, 0.6) !important;
+    background: var(--modal-backdrop) !important;
     backdrop-filter: blur(4px) !important;
     -webkit-backdrop-filter: blur(4px) !important;
     z-index: 11999 !important;
@@ -7858,6 +7882,9 @@ body::-webkit-scrollbar,
     z-index: 12000 !important;
     padding: 16px 16px calc(24px + env(safe-area-inset-bottom, 0px)) 16px !important;
     box-sizing: border-box !important;
+    background: var(--bg-primary) !important;
+    border-top: 1px solid var(--border-color) !important;
+    color: var(--text-primary) !important;
     animation: slide-up-sheet 0.25s cubic-bezier(0.16, 1, 0.3, 1) !important;
   }
 
@@ -7875,8 +7902,8 @@ body::-webkit-scrollbar,
     width: 28px !important;
     height: 28px !important;
     border-radius: 50% !important;
-    background: rgba(255, 255, 255, 0.1) !important;
-    border: none !important;
+    background: var(--bg-surface) !important;
+    border: 1px solid var(--border-color) !important;
     color: var(--text-primary) !important;
     cursor: pointer !important;
   }
@@ -7886,7 +7913,8 @@ body::-webkit-scrollbar,
     margin: 0 0 12px 0 !important;
     padding: 10px 12px !important;
     border-radius: 16px !important;
-    background: var(--card-bg) !important;
+    background: var(--glass-bg) !important;
+    border: 1px solid var(--border-color) !important;
     box-sizing: border-box !important;
   }
 
@@ -7934,11 +7962,15 @@ body::-webkit-scrollbar,
     flex-direction: column !important;
     align-items: center !important;
     gap: 2px !important;
+    background: var(--bg-surface) !important;
+    border: 1px solid var(--border-color) !important;
+    color: var(--text-primary) !important;
   }
 
   .forecast-day-name {
     font-size: 10px !important;
     font-weight: 700 !important;
+    color: var(--text-secondary) !important;
   }
 
   .forecast-icon-frame {
@@ -7951,6 +7983,7 @@ body::-webkit-scrollbar,
   .forecast-temp-val {
     font-size: 12.5px !important;
     font-weight: 800 !important;
+    color: var(--text-primary) !important;
   }
 
   .forecast-desc-text {
@@ -7965,7 +7998,7 @@ body::-webkit-scrollbar,
 
   .forecast-humidity-text {
     font-size: 8px !important;
-    color: #38BDF8 !important;
+    color: var(--accent) !important;
   }
 
   /* 6. Dashboard Telemetry & Risk Grid (1 Column) */
@@ -7978,6 +8011,9 @@ body::-webkit-scrollbar,
   .ios-card {
     padding: 14px !important;
     border-radius: 16px !important;
+    background: var(--bg-primary) !important;
+    border: 1px solid var(--border-color) !important;
+    color: var(--text-primary) !important;
   }
 
   /* 7. Bespoke iOS Emergency Bottom Navigation Bar */
@@ -7988,15 +8024,15 @@ body::-webkit-scrollbar,
     left: 0 !important;
     right: 0 !important;
     height: 58px !important;
-    background: rgba(15, 23, 42, 0.88) !important;
-    backdrop-filter: blur(28px) saturate(220%) !important;
-    -webkit-backdrop-filter: blur(28px) saturate(220%) !important;
-    border-top: 1px solid rgba(255, 255, 255, 0.12) !important;
+    background: var(--glass-bg) !important;
+    backdrop-filter: blur(28px) saturate(180%) !important;
+    -webkit-backdrop-filter: blur(28px) saturate(180%) !important;
+    border-top: 1px solid var(--border-color) !important;
     z-index: 9999 !important;
     justify-content: space-around !important;
     align-items: center !important;
     padding: 4px 6px calc(6px + env(safe-area-inset-bottom, 0px)) 6px !important;
-    box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.35) !important;
+    box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.12) !important;
   }
 
   .mob-nav-btn {
@@ -8021,11 +8057,11 @@ body::-webkit-scrollbar,
   }
 
   .mob-nav-btn.active {
-    background: rgba(56, 189, 248, 0.1) !important;
+    background: var(--bg-surface) !important;
   }
 
   .mob-nav-btn.active .mob-nav-label {
-    color: #38BDF8 !important;
+    color: var(--accent) !important;
     font-weight: 700 !important;
   }
 
@@ -8056,7 +8092,7 @@ body::-webkit-scrollbar,
     display: flex !important;
     align-items: center !important;
     justify-content: center !important;
-    box-shadow: 0 4px 16px rgba(239, 68, 68, 0.55), 0 0 0 2px rgba(255, 255, 255, 0.2) !important;
+    box-shadow: 0 4px 16px rgba(239, 68, 68, 0.45) !important;
     margin-top: -14px !important;
     transition: transform 0.15s ease !important;
   }

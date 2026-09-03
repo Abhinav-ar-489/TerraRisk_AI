@@ -33,7 +33,7 @@ export default function HazardHeatmapLayer({ points = [], isVisible = false, opa
     return () => {
       try {
         map.removeLayer(heatLayer);
-      } catch (e) {
+      } catch {
         // Safe unmount
       }
     };

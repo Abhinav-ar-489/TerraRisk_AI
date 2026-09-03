@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { X, AlertTriangle, ShieldAlert, MapPin, Send, AlertOctagon, Waves, Mountain, Construction, Zap, Camera, Sparkles, CheckCircle2 } from 'lucide-react';
-import axios from 'axios';
+import { X, AlertTriangle, ShieldAlert, MapPin, Send, AlertOctagon, Waves, Mountain, Construction, Zap, Camera, Sparkles } from 'lucide-react';
+import api from '../services/api';
 
 const HAZARD_CATEGORIES = [
   { id: 'mud_crack', label: 'Mud Crack / Fissure', icon: Zap, color: '#F59E0B', desc: 'Tension cracks, soil displacement, slope fractures' },
@@ -49,14 +49,14 @@ export default function ReportHazardModal({ isOpen, onClose, coordinates, user, 
       setCvAnalyzing(true);
       setCvFeedback(null);
       try {
-        const res = await axios.post('http://127.0.0.1:5000/api/vision/analyze', {
+        const res = await api.post('/api/vision/analyze', {
           image: b64,
           hazard_type: hazardType
         });
         if (res.data.success) {
           setCvFeedback(res.data.analysis);
         }
-      } catch (err) {
+      } catch {
         console.log("CV pre-analysis skipped.");
       } finally {
         setCvAnalyzing(false);
@@ -69,13 +69,8 @@ export default function ReportHazardModal({ isOpen, onClose, coordinates, user, 
     e.preventDefault();
     setError('');
 
-    if (!token) {
+    if (!token && !localStorage.getItem('terrarisk_token')) {
       setError('You must be signed in to submit hazard reports.');
-      return;
-    }
-
-    if (user?.credibility_score < 10) {
-      setError('Your credibility score is below 10. Hazard reporting is restricted.');
       return;
     }
 
@@ -86,15 +81,13 @@ export default function ReportHazardModal({ isOpen, onClose, coordinates, user, 
 
     setLoading(true);
     try {
-      const res = await axios.post('http://127.0.0.1:5000/api/incidents/report', {
+      const res = await api.post('/api/incidents/report', {
         hazard_type: hazardType,
         lat: lat,
         lng: lng,
         severity: severity,
         description: description.trim(),
         image: photoBase64
-      }, {
-        headers: { Authorization: `Bearer ${token}` }
       });
 
       if (res.data.success) {
@@ -143,12 +136,12 @@ export default function ReportHazardModal({ isOpen, onClose, coordinates, user, 
           <div className="report-hazard-meta-banner">
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <MapPin size={13} color="var(--accent)" />
-              <span style={{ fontSize: '11.5px', fontWeight: '800', color: 'var(--text-primary)' }}>
+              <span style={{ fontSize: '11.5px', fontWeight: '550', color: 'var(--text-primary)' }}>
                 GPS Locked: ({lat}°N, {lng}°E)
               </span>
             </div>
-            <div style={{ fontSize: '10.5px', color: 'var(--text-secondary)', fontWeight: '700' }}>
-              Reporter: <b style={{ color: 'var(--accent-green)' }}>{user?.name?.split(' ')[0] || 'Citizen'}</b> (🛡️ {user?.credibility_score ?? 50}/100)
+            <div style={{ fontSize: '10.5px', color: 'var(--text-secondary)', fontWeight: '500' }}>
+              Reporter: <b style={{ color: 'var(--accent-green)' }}>{user?.name?.split(' ')[0] || 'Citizen'}</b> {user?.is_verified || user?.role === 'Authority_Admin' ? <span style={{ color: '#30D158' }}>✓ Verified</span> : <span style={{ color: 'var(--text-secondary)' }}>• Active</span>}
             </div>
           </div>
 

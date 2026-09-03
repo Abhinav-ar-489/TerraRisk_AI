@@ -1,12 +1,11 @@
 import { useState } from 'react';
 import { X, Save, AlertTriangle, Home } from 'lucide-react';
-import axios from 'axios';
+import api from '../services/api';
 
 export default function ShelterOccupancyModal({
   isOpen,
   onClose,
   shelter,
-  token,
   triggerToast,
   onOccupancyUpdated
 }) {
@@ -26,11 +25,9 @@ export default function ShelterOccupancyModal({
     setError('');
 
     try {
-      const res = await axios.post('http://127.0.0.1:5000/api/shelters/update-occupancy', {
+      const res = await api.post('/api/shelters/update-occupancy', {
         shelter_id: shelter.id,
         occupied: parseInt(occupied)
-      }, {
-        headers: { Authorization: `Bearer ${token}` }
       });
 
       if (res.data.success) {

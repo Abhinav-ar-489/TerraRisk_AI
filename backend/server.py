@@ -1,5 +1,7 @@
 import os
 import sys
+import time
+from collections import defaultdict
 import requests
 import joblib
 import pandas as pd
@@ -29,8 +31,14 @@ try:
         init_db,
         get_db_connection,
         get_user_by_phone,
+        get_user_by_email,
+        get_user_by_identifier,
         get_user_by_id,
         create_user,
+        update_unverified_user,
+        set_user_verification,
+        set_email_otp,
+        verify_email_otp,
         update_user_credibility,
         get_nearby_shelters,
         get_shelter_by_id,
@@ -47,19 +55,16 @@ try:
         verify_password,
         create_incident_report,
         find_nearby_pending_cluster,
+        check_and_autoverify_cluster,
         get_active_incident_clusters,
         get_pending_incident_clusters,
         verify_incident_cluster,
         reject_incident_cluster,
+        resolve_incident_cluster,
         create_missing_person,
         get_missing_persons,
         get_missing_person_by_id,
         update_missing_person_status,
-        get_family_contacts,
-        add_family_contact,
-        delete_family_contact,
-        record_family_ping,
-        get_citizen_safety_status,
         create_volunteer_mission,
         get_volunteer_missions,
         update_volunteer_mission_status,
@@ -78,13 +83,19 @@ try:
     from vision import analyze_hazard_image
     from routing import calculate_evacuation_route
     from sitrep import generate_sitrep_pdf, generate_sitrep_data
+    from mailer import send_verification_email
 except ImportError:
     from backend.database import (
         init_db,
         get_db_connection,
         get_user_by_phone,
+        get_user_by_email,
+        get_user_by_identifier,
         get_user_by_id,
         create_user,
+        set_user_verification,
+        set_email_otp,
+        verify_email_otp,
         update_user_credibility,
         get_nearby_shelters,
         get_shelter_by_id,
@@ -105,15 +116,11 @@ except ImportError:
         get_pending_incident_clusters,
         verify_incident_cluster,
         reject_incident_cluster,
+        resolve_incident_cluster,
         create_missing_person,
         get_missing_persons,
         get_missing_person_by_id,
         update_missing_person_status,
-        get_family_contacts,
-        add_family_contact,
-        delete_family_contact,
-        record_family_ping,
-        get_citizen_safety_status,
         create_volunteer_mission,
         get_volunteer_missions,
         update_volunteer_mission_status,
@@ -132,12 +139,20 @@ except ImportError:
     from backend.vision import analyze_hazard_image
     from backend.routing import calculate_evacuation_route
     from backend.sitrep import generate_sitrep_pdf, generate_sitrep_data
+    from backend.mailer import send_verification_email
 
 # Load local environment variables from .env
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app)
+
+# Configurable CORS origins for production security
+cors_origins_env = os.getenv("CORS_ORIGINS", "")
+if cors_origins_env:
+    allowed_origins = [o.strip() for o in cors_origins_env.split(",") if o.strip()]
+    CORS(app, origins=allowed_origins, supports_credentials=True)
+else:
+    CORS(app)
 
 # ==========================================================================
 # DATABASE INITIALIZATION
@@ -156,7 +171,43 @@ TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
 YOUR_PERSONAL_MOBILE = os.getenv("YOUR_PERSONAL_MOBILE", "+919999900000")
-JWT_SECRET = os.getenv("JWT_SECRET", "terrarisk_disaster_platform_auth_secret_key_2026_jwt_token_secure")
+
+# Enforce JWT_SECRET in production mode
+JWT_SECRET = os.getenv("JWT_SECRET")
+if not JWT_SECRET:
+    if os.getenv("FLASK_ENV") == "production":
+        raise RuntimeError("CRITICAL: 'JWT_SECRET' environment variable must be set in production mode.")
+    JWT_SECRET = "terrarisk_disaster_platform_auth_secret_key_2026_jwt_token_secure"
+
+# ==========================================================================
+# ⏱️ RATE LIMITING MIDDLEWARE
+# ==========================================================================
+RATE_LIMIT_STORE = defaultdict(list)
+
+def rate_limit(max_requests: int = 15, window_seconds: int = 60):
+    """Enforce sliding-window client IP rate limiting for sensitive endpoints."""
+    def decorator(f):
+        @functools.wraps(f)
+        def wrapped(*args, **kwargs):
+            if os.getenv("TESTING") == "1":
+                return f(*args, **kwargs)
+            client_ip = request.headers.get("X-Forwarded-For", request.remote_addr or "127.0.0.1").split(",")[0].strip()
+            now = time.time()
+            key = f"{f.__name__}:{client_ip}"
+            
+            # Keep timestamps within sliding window
+            timestamps = [t for t in RATE_LIMIT_STORE[key] if now - t < window_seconds]
+            if len(timestamps) >= max_requests:
+                retry_after = max(1, int(window_seconds - (now - timestamps[0])))
+                return jsonify({
+                    "success": False,
+                    "error": f"Too many requests. Rate limit reached. Please retry in {retry_after} seconds."
+                }), 429
+            timestamps.append(now)
+            RATE_LIMIT_STORE[key] = timestamps
+            return f(*args, **kwargs)
+        return wrapped
+    return decorator
 
 # Historic Hotspots Array (Kerala Ghats)
 HOTSPOTS = [
@@ -215,6 +266,7 @@ def generate_jwt_token(user_dict: dict) -> str:
         "user_id": user_dict["id"],
         "phone": user_dict["phone"],
         "role": user_dict["role"],
+        "is_verified": user_dict.get("is_verified", 0),
         "exp": datetime.datetime.utcnow() + datetime.timedelta(days=7),
         "iat": datetime.datetime.utcnow()
     }
@@ -256,7 +308,8 @@ def token_required(f):
                     "name": payload.get("name", "User"),
                     "phone": payload.get("phone", ""),
                     "role": payload.get("role", "Citizen"),
-                    "credibility_score": payload.get("credibility_score", 50)
+                    "is_verified": payload.get("is_verified", 0),
+                    "credibility_score": payload.get("credibility_score", 100)
                 }
             else:
                 return jsonify({"success": False, "error": "User account no longer exists"}), 401
@@ -460,20 +513,27 @@ def generate_ollama_alert(location_name, risk_pct):
 # 🔑 AUTHENTICATION & CITIZEN PROFILE ENDPOINTS
 # ==========================================================================
 @app.route('/api/auth/register', methods=['POST'])
+@rate_limit(max_requests=10, window_seconds=60)
 def register():
     import re
+    import secrets
     try:
         data = request.json or {}
         name = data.get("name", "").strip()
         phone = data.get("phone", "").strip()
+        email = data.get("email", "").strip().lower()
         password = data.get("password", "")
         role = data.get("role", "Citizen").strip()
-        district = data.get("district", "Wayanad").strip()
-
         lat = data.get("lat")
         lng = data.get("lng")
-        if lat is not None: lat = float(lat)
-        if lng is not None: lng = float(lng)
+        district = data.get("district")
+
+        # Optional coords parsing
+        try:
+            lat = float(lat) if lat is not None else None
+            lng = float(lng) if lng is not None else None
+        except (ValueError, TypeError):
+            lat, lng = None, None
 
         # ── Name validation ─────────────────────────────────────────
         if not name:
@@ -485,21 +545,32 @@ def register():
         if not re.match(r"^[A-Za-z0-9\s\-\._'’]+$", name):
             return jsonify({"success": False, "error": "Name can only contain letters, numbers, spaces, hyphens, dots, or underscores."}), 400
 
-        # ── Phone validation ────────────────────────────────────────
-        if not phone:
-            return jsonify({"success": False, "error": "Phone number is required."}), 400
-        # Normalise: strip spaces/dashes, allow optional +91 prefix
-        phone_digits = re.sub(r"[\s\-]", "", phone)
-        if phone_digits.startswith("+91"):
-            phone_digits_only = phone_digits[3:]
-        elif phone_digits.startswith("91") and len(phone_digits) == 12:
-            phone_digits_only = phone_digits[2:]
+        # ── Contact validation (Requires either phone OR email) ─────
+        if not phone and not email:
+            return jsonify({"success": False, "error": "Please provide either a mobile phone number or an email address."}), 400
+
+        # Normalise & validate phone if provided
+        if phone:
+            phone_digits = re.sub(r"[\s\-]", "", phone)
+            if phone_digits.startswith("+91"):
+                phone_digits_only = phone_digits[3:]
+            elif phone_digits.startswith("91") and len(phone_digits) == 12:
+                phone_digits_only = phone_digits[2:]
+            else:
+                phone_digits_only = phone_digits.lstrip("+")
+            if not re.match(r"^[6-9]\d{9}$", phone_digits_only):
+                return jsonify({"success": False, "error": "Enter a valid 10-digit Indian mobile number (starts with 6-9)."}), 400
+            phone = "+91" + phone_digits_only
         else:
-            phone_digits_only = phone_digits.lstrip("+")
-        if not re.match(r"^[6-9]\d{9}$", phone_digits_only):
-            return jsonify({"success": False, "error": "Enter a valid 10-digit Indian mobile number (starts with 6-9)."}), 400
-        # Store in E.164 format
-        phone = "+91" + phone_digits_only
+            phone = None
+
+        # Validate email if provided
+        EMAIL_REGEX = r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$"
+        if email:
+            if not re.match(EMAIL_REGEX, email):
+                return jsonify({"success": False, "error": "Please enter a valid email address."}), 400
+        else:
+            email = None
 
         # ── Password validation ─────────────────────────────────────
         if not password:
@@ -516,62 +587,177 @@ def register():
         if role not in ("Citizen", "Volunteer"):
             role = "Citizen"
 
-        existing_user = get_user_by_phone(phone)
-        if existing_user:
-            return jsonify({"success": False, "error": "A user with this phone number is already registered."}), 409
+        existing_phone_user = get_user_by_phone(phone) if phone else None
+        existing_email_user = get_user_by_email(email) if email else None
+
+        # Check duplicate phone
+        if existing_phone_user:
+            if existing_phone_user.get("is_verified") or existing_phone_user.get("is_email_verified"):
+                return jsonify({"success": False, "error": "A user with this phone number is already registered."}), 409
+            if existing_email_user and existing_phone_user["id"] != existing_email_user["id"]:
+                return jsonify({"success": False, "error": "A user with this phone number is already registered."}), 409
+
+        # Check duplicate email
+        if existing_email_user:
+            if existing_email_user.get("is_email_verified") or existing_email_user.get("is_verified"):
+                return jsonify({"success": False, "error": "An account with this email address is already registered."}), 409
 
         password_hash = hash_password(password)
-        user_id = create_user(
-            name=name, phone=phone, password_hash=password_hash,
-            lat=lat, lng=lng, district=district, role=role, credibility_score=50
-        )
 
-        log_audit_action("USER_REGISTERED", actor_id=user_id, target_id=user_id, details=f"New {role} registered: {phone}")
+        if email:
+            # Email provided -> Dispatch 6-digit OTP for email verification
+            otp_code = f"{secrets.randbelow(900000) + 100000}"
 
-        user_profile = get_user_by_id(user_id)
+            # If user previously started registration but is still unverified, refresh their pending registration
+            if existing_email_user and not existing_email_user.get("is_email_verified") and not existing_email_user.get("is_verified"):
+                user_id = existing_email_user["id"]
+                update_unverified_user(
+                    user_id=user_id, name=name, phone=phone, password_hash=password_hash,
+                    lat=lat, lng=lng, district=district, role=role, email_otp=otp_code
+                )
+                log_audit_action("USER_REGISTRATION_RESUMED", actor_id=user_id, target_id=user_id, details=f"Pending {role} registration refreshed for {email}. New OTP generated.")
+            else:
+                user_id = create_user(
+                    name=name, phone=phone, email=email, password_hash=password_hash,
+                    lat=lat, lng=lng, district=district, role=role,
+                    is_verified=0, is_email_verified=0, email_otp=otp_code, credibility_score=50
+                )
+                log_audit_action("USER_REGISTERED_PENDING_VERIFY", actor_id=user_id, target_id=user_id, details=f"New {role} registered ({phone or 'No phone'}, {email}). OTP generated.")
+
+            send_verification_email(email, name, otp_code)
+            user_profile = get_user_by_id(user_id)
+            token = generate_jwt_token(user_profile)
+
+            return jsonify({
+                "success": True,
+                "message": f"Verification code sent to {email}",
+                "email": email,
+                "user_id": user_id,
+                "dev_otp": otp_code,
+                "token": token,
+                "user": user_profile,
+                "step": "verify_email"
+            }), 201
+        else:
+            # Phone only provided -> Instant registration & verification
+            user_id = create_user(
+                name=name, phone=phone, email=None, password_hash=password_hash,
+                lat=lat, lng=lng, district=district, role=role,
+                is_verified=1, is_email_verified=0, credibility_score=50
+            )
+            log_audit_action("USER_REGISTERED_PHONE_ONLY", actor_id=user_id, target_id=user_id, details=f"New {role} registered with phone: {phone}.")
+            user_profile = get_user_by_id(user_id)
+            token = generate_jwt_token(user_profile)
+
+            return jsonify({
+                "success": True,
+                "message": f"Welcome to TerraRisk AI, {name}!",
+                "user_id": user_id,
+                "token": token,
+                "user": user_profile,
+                "step": "complete"
+            }), 201
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/auth/verify-email', methods=['POST'])
+@rate_limit(max_requests=15, window_seconds=60)
+def verify_email():
+    try:
+        data = request.json or {}
+        email = data.get("email", "").strip().lower()
+        code = data.get("code", "").strip()
+
+        if not email:
+            return jsonify({"success": False, "error": "Email address is required."}), 400
+        if not code or len(code) != 6 or not code.isdigit():
+            return jsonify({"success": False, "error": "Please enter a valid 6-digit verification code."}), 400
+
+        success, message, user_profile = verify_email_otp(email, code)
+        if not success or not user_profile:
+            return jsonify({"success": False, "error": message}), 400
+
         token = generate_jwt_token(user_profile)
+        log_audit_action("USER_EMAIL_VERIFIED", actor_id=user_profile["id"], target_id=user_profile["id"], details=f"Email verified: {email}")
 
         return jsonify({
             "success": True,
-            "message": f"Welcome to TerraRisk AI, {name}!",
+            "message": "Email verified successfully! Welcome to TerraRisk AI.",
             "token": token,
             "user": user_profile
-        }), 201
+        }), 200
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/auth/resend-code', methods=['POST'])
+@rate_limit(max_requests=5, window_seconds=60)
+def resend_code():
+    import secrets
+    try:
+        data = request.json or {}
+        email = data.get("email", "").strip().lower()
+        if not email:
+            return jsonify({"success": False, "error": "Email address is required."}), 400
+
+        user = get_user_by_email(email)
+        if not user:
+            return jsonify({"success": False, "error": "No account found with this email address."}), 404
+
+        if user.get("is_email_verified"):
+            return jsonify({"success": True, "message": "Email is already verified. You can log in directly."}), 200
+
+        new_otp = f"{secrets.randbelow(900000) + 100000}"
+        set_email_otp(user["id"], new_otp, expires_in_minutes=10)
+        send_verification_email(email, user.get("name", "Citizen"), new_otp)
+
+        return jsonify({
+            "success": True,
+            "message": f"New verification code dispatched to {email}",
+            "dev_otp": new_otp
+        }), 200
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
 
 @app.route('/api/auth/login', methods=['POST'])
+@rate_limit(max_requests=10, window_seconds=60)
 def login():
     import re
     try:
         data = request.json or {}
-        phone = data.get("phone", "").strip()
+        # Support identifier, phone, or email
+        identifier = data.get("identifier") or data.get("phone") or data.get("email") or ""
+        identifier = str(identifier).strip()
         password = data.get("password", "")
 
-        if not phone:
-            return jsonify({"success": False, "error": "Phone number is required."}), 400
+        if not identifier:
+            return jsonify({"success": False, "error": "Mobile phone number or email address is required."}), 400
         if not password:
             return jsonify({"success": False, "error": "Password is required."}), 400
 
-        # Normalise phone for lookup (same logic as register)
-        phone_digits = re.sub(r"[\s\-]", "", phone)
-        if phone_digits.startswith("+91"):
-            phone_digits_only = phone_digits[3:]
-        elif phone_digits.startswith("91") and len(phone_digits) == 12:
-            phone_digits_only = phone_digits[2:]
-        else:
-            phone_digits_only = phone_digits.lstrip("+")
-        if re.match(r"^[6-9]\d{9}$", phone_digits_only):
-            phone = "+91" + phone_digits_only
-
-        user = get_user_by_phone(phone)
+        user = get_user_by_identifier(identifier)
         if not user or not verify_password(password, user["password_hash"]):
-            return jsonify({"success": False, "error": "Invalid phone number or password."}), 401
+            return jsonify({"success": False, "error": "Invalid credentials or user not found."}), 401
+
+        # Check if email verification is still pending
+        if user.get("email") and not user.get("is_email_verified") and not user.get("is_verified"):
+            import secrets
+            new_otp = f"{secrets.randbelow(900000) + 100000}"
+            set_email_otp(user["id"], new_otp, expires_in_minutes=10)
+            send_verification_email(user["email"], user.get("name", "Citizen"), new_otp)
+            return jsonify({
+                "success": False,
+                "requires_verification": True,
+                "email": user["email"],
+                "dev_otp": new_otp,
+                "error": "Your email address is not verified yet. A fresh 6-digit verification code has been dispatched to your email."
+            }), 403
 
         user_profile = get_user_by_id(user["id"])
         token = generate_jwt_token(user_profile)
-        log_audit_action("USER_LOGIN_SUCCESS", actor_id=user["id"], target_id=user["id"], details=f"{user['role']} logged in")
+        log_audit_action("USER_LOGIN_SUCCESS", actor_id=user["id"], target_id=user["id"], details=f"{user['role']} logged in ({identifier})")
 
         return jsonify({
             "success": True,
@@ -594,8 +780,8 @@ def get_current_user_profile(current_user):
 def check_citizen_safety(current_user):
     try:
         data = request.json if request.is_json and request.json else {}
-        lat = request.args.get('lat', type=float) or data.get('lat') or current_user.get('lat') or 11.5361
-        lng = request.args.get('lng', type=float) or data.get('lng') or current_user.get('lng') or 76.1667
+        lat = request.args.get('lat', type=float) or data.get('lat') or 11.5542
+        lng = request.args.get('lng', type=float) or data.get('lng') or 76.1308
 
         lat = float(lat)
         lng = float(lng)
@@ -886,6 +1072,7 @@ def get_temporal_risk_forecast():
 # 👁️ COMPUTER VISION HAZARD TRIAGE ENDPOINTS
 # ==========================================================================
 @app.route('/api/vision/analyze', methods=['POST'])
+@rate_limit(max_requests=20, window_seconds=60)
 def analyze_vision_image():
     """Analyze a photo for geological hazard characteristics and spam probability."""
     try:
@@ -906,13 +1093,6 @@ def analyze_vision_image():
 @token_required
 def report_incident(current_user):
     try:
-        cred_score = current_user.get("credibility_score", 50)
-        if cred_score < 10:
-            return jsonify({
-                "success": False,
-                "error": "Citizen credibility score is below the minimum threshold (10). Incident reporting is restricted."
-            }), 403
-
         data = request.json or {}
         hazard_type = data.get("hazard_type", "mud_crack")
         lat = data.get("lat")
@@ -973,19 +1153,28 @@ def report_incident(current_user):
             is_flagged_spam=is_spam_flag
         )
 
+        # 4. Check for auto-verification consensus threshold (>= 5 reports in area)
+        is_auto_verified, report_consensus_count = check_and_autoverify_cluster(cluster_id, threshold=5)
+
         log_audit_action(
             "INCIDENT_REPORTED",
             actor_id=current_user["id"],
             target_id=incident_id,
-            details=f"Hazard: {hazard_type} (Sev: {severity}) | AI Conf: {ai_conf} | Cluster: {cluster_id}"
+            details=f"Hazard: {hazard_type} (Sev: {severity}) | AI Conf: {ai_conf} | Cluster: {cluster_id} | AutoVerified: {is_auto_verified} ({report_consensus_count} reports)"
         )
+
+        msg = "Hazard report submitted and analyzed by Computer Vision Brain."
+        if is_auto_verified:
+            msg = f"Hazard report submitted. Cluster reached {report_consensus_count} community reports and has been AUTO-VERIFIED on the map!"
 
         return jsonify({
             "success": True,
-            "message": "Hazard report submitted and analyzed by Computer Vision Brain.",
+            "message": msg,
             "incident_id": incident_id,
             "cluster_id": cluster_id,
             "is_clustered": is_clustered,
+            "is_auto_verified": is_auto_verified,
+            "consensus_count": report_consensus_count,
             "ai_analysis": cv_analysis
         }), 201
     except Exception as e:
@@ -1005,11 +1194,13 @@ def get_active_incidents():
 # 🛡️ AUTHORITY TRIAGE DASHBOARD & CREDIBILITY ENGINE
 # ==========================================================================
 @app.route('/api/authority/pending-clusters', methods=['GET'])
+@app.route('/api/authority/clusters', methods=['GET'])
 @token_required
 @authority_required
 def get_authority_pending_clusters(current_user):
     try:
-        clusters = get_pending_incident_clusters()
+        status_param = request.args.get("status", "all").strip().lower()
+        clusters = get_pending_incident_clusters(status_filter=status_param)
         return jsonify({"success": True, "count": len(clusters), "clusters": clusters})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
@@ -1059,6 +1250,58 @@ def reject_incident(current_user):
         if not result.get("success"):
             return jsonify(result), 400
         return jsonify(result), 200
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/incidents/resolve', methods=['POST'])
+@token_required
+@authority_required
+def resolve_incident(current_user):
+    """Mark an active hazard cluster as resolved/cleared once field teams mitigate it."""
+    try:
+        data = request.json or {}
+        cluster_id = data.get("cluster_id") or data.get("incident_id")
+        notes = data.get("notes", "Site Cleared / Hazard Mitigated").strip()
+        if not cluster_id:
+            return jsonify({"success": False, "error": "cluster_id parameter is required"}), 400
+            
+        result = resolve_incident_cluster(cluster_id=str(cluster_id), resolved_by_user_id=current_user["id"], notes=notes)
+        if not result.get("success"):
+            return jsonify(result), 400
+        return jsonify(result), 200
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/authority/users/verify', methods=['POST'])
+@token_required
+@authority_required
+def verify_user_account(current_user):
+    """Directly set user verification status (Admin Verification)."""
+    try:
+        data = request.json or {}
+        user_id = data.get("user_id")
+        is_verified = bool(data.get("is_verified", True))
+        if not user_id:
+            return jsonify({"success": False, "error": "user_id is required"}), 400
+            
+        success = set_user_verification(int(user_id), is_verified)
+        if not success:
+            return jsonify({"success": False, "error": "User not found or update failed."}), 404
+            
+        log_audit_action(
+            "USER_VERIFIED" if is_verified else "USER_UNVERIFIED",
+            actor_id=current_user["id"],
+            target_id=int(user_id),
+            details=f"User {user_id} verification status set to {is_verified} by Admin {current_user['name']}"
+        )
+        return jsonify({
+            "success": True,
+            "message": f"User verification updated to {'Verified' if is_verified else 'Unverified'}.",
+            "user_id": int(user_id),
+            "is_verified": is_verified
+        }), 200
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
@@ -1129,7 +1372,10 @@ def broadcast_geofenced_alert(current_user):
 
 @app.route('/api/broadcast', methods=['POST'])
 @app.route('/api/sms/blast', methods=['POST'])
-def direct_sms_broadcast_endpoint():
+@token_required
+@authority_required
+@rate_limit(max_requests=10, window_seconds=60)
+def direct_sms_broadcast_endpoint(current_user):
     """Live Twilio Cellular SMS Gateway Dispatcher with automatic zero-cost simulation fallback."""
     try:
         data = request.json or {}
@@ -1145,7 +1391,7 @@ def direct_sms_broadcast_endpoint():
                     to=target_phone
                 )
                 print(f"[OK] Live Twilio SMS sent to {target_phone}! SID: {message.sid}")
-                log_audit_action("TWILIO_SMS_DISPATCHED", details=f"Sent to {target_phone} | SID: {message.sid}")
+                log_audit_action("TWILIO_SMS_DISPATCHED", actor_id=current_user.get("id"), details=f"Sent to {target_phone} | SID: {message.sid} by {current_user.get('name')}")
                 return jsonify({
                     "success": True,
                     "message": "SMS Broadcast Dispatched via Twilio",
@@ -1418,92 +1664,6 @@ def change_missing_person_status(current_user, person_id):
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
-
-# ==========================================================================
-# 👨‍👩‍👧 FAMILY SAFETY CIRCLE & "I AM SAFE" ONE-TAP PING
-# ==========================================================================
-@app.route('/api/user/family-contacts', methods=['GET'])
-@token_required
-def get_user_family_contacts(current_user):
-    try:
-        contacts = get_family_contacts(current_user["id"])
-        return jsonify({"success": True, "contacts": contacts})
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
-
-
-@app.route('/api/user/family-contacts', methods=['POST'])
-@token_required
-def add_user_family_contact(current_user):
-    try:
-        data = request.json or {}
-        name = data.get("contact_name", "").strip()
-        phone = data.get("contact_phone", "").strip()
-        relationship = data.get("relationship", "Family").strip()
-        
-        if not name or not phone:
-            return jsonify({"success": False, "error": "Contact name and phone number are required"}), 400
-            
-        contact_id = add_family_contact(user_id=current_user["id"], contact_name=name, contact_phone=phone, relationship=relationship)
-        return jsonify({"success": True, "message": "Emergency contact added to Family Circle", "contact_id": contact_id}), 201
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
-
-
-@app.route('/api/user/family-contacts/<int:contact_id>', methods=['DELETE'])
-@token_required
-def delete_user_family_contact(current_user, contact_id):
-    try:
-        success = delete_family_contact(contact_id, current_user["id"])
-        if not success:
-            return jsonify({"success": False, "error": "Contact not found"}), 404
-        return jsonify({"success": True, "message": "Contact removed"}), 200
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
-
-
-@app.route('/api/user/ping-safe', methods=['POST'])
-@token_required
-def trigger_family_safety_ping(current_user):
-    """1-Tap 'I Am Safe' Broadcast Ping with GPS coordinates & shelter link."""
-    try:
-        data = request.json or {}
-        lat = data.get("lat") or current_user.get("lat") or 11.5542
-        lng = data.get("lng") or current_user.get("lng") or 76.1308
-        status_msg = data.get("status_message", "I am safe and reached high ground / shelter.")
-        
-        record_family_ping(user_id=current_user["id"], lat=float(lat), lng=float(lng), status_message=status_msg)
-        
-        maps_url = f"https://maps.google.com/?q={lat:.5f},{lng:.5f}"
-        wa_text = f"✅ I AM SAFE (TerraRisk AI Check-In)\nName: {current_user['name']}\nStatus: {status_msg}\nLocation: {maps_url}\nTimestamp: {datetime.datetime.utcnow().strftime('%d-%b-%Y %I:%M %p UTC')}"
-        import urllib.parse
-        wa_link = f"https://api.whatsapp.com/send?text={urllib.parse.quote(wa_text)}"
-        
-        return jsonify({
-            "success": True,
-            "message": "Safety ping recorded. WhatsApp beacon generated.",
-            "whatsapp_share_url": wa_link,
-            "safety_summary": wa_text
-        }), 200
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
-
-
-@app.route('/api/public/check-status', methods=['GET'])
-def public_check_citizen_status():
-    """Public lookup for family members outside disaster zones to check loved one's status."""
-    try:
-        phone = request.args.get('phone', '').strip()
-        if not phone:
-            return jsonify({"success": False, "error": "Phone number query parameter is required"}), 400
-            
-        status_record = get_citizen_safety_status(phone)
-        if not status_record:
-            return jsonify({"success": False, "error": "No citizen found with this phone number."}), 404
-            
-        return jsonify({"success": True, "record": status_record}), 200
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
 
 
 # ==========================================================================

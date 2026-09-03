@@ -1,7 +1,9 @@
 import { ShieldCheck, AlertTriangle, AlertOctagon, CloudRain, Thermometer, Mountain, Building2, PhoneCall, X, Navigation, Radio } from 'lucide-react';
 
-export default function SafetyBanner({ safetyData, onClose, onFocusHome }) {
+export default function SafetyBanner({ safetyData, onClose, onFocusLocation, onFocusHome }) {
   if (!safetyData) return null;
+
+  const focusAction = onFocusLocation || onFocusHome;
 
   const {
     status = 'Safe',
@@ -44,8 +46,8 @@ export default function SafetyBanner({ safetyData, onClose, onFocusHome }) {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          {onFocusHome && (
-            <button onClick={onFocusHome} className="safety-action-btn" title="Focus map on my coordinates">
+          {focusAction && (
+            <button onClick={focusAction} className="safety-action-btn" title="Focus map on location coordinates">
               <Navigation size={13} /> Focus Map
             </button>
           )}
@@ -92,13 +94,13 @@ export default function SafetyBanner({ safetyData, onClose, onFocusHome }) {
           <div className="safety-shelter-card">
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
               <Building2 size={14} color="var(--accent)" />
-              <span style={{ fontSize: '11px', fontWeight: '800', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
+              <span style={{ fontSize: '11px', fontWeight: '550', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
                 Nearest Relief Shelter ({nearest_shelter.distance_km} km away)
               </span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
-                <div style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-primary)' }}>{nearest_shelter.name}</div>
+                <div style={{ fontSize: '13px', fontWeight: '550', color: 'var(--text-primary)' }}>{nearest_shelter.name}</div>
                 <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
                   District: {nearest_shelter.district} | Available Beds: <b style={{ color: 'var(--accent-green)' }}>{nearest_shelter.available_capacity}</b> / {nearest_shelter.capacity}
                 </div>

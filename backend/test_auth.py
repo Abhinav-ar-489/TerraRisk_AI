@@ -166,6 +166,66 @@ class TestPhase2AuthAndProfile(unittest.TestCase):
         self.assertIn("distance_km", data["nearest_shelter"])
         self.assertIn("available_capacity", data["nearest_shelter"])
 
+    def test_06_email_verification_and_dual_login(self):
+        """Verify full production flow: Registration with email/location, OTP verification, and dual login."""
+        unique_num = random.randint(100000, 999999)
+        test_phone = f"+919447{unique_num}"
+        test_email = f"citizen_{unique_num}@kerala.gov.in"
+        password = "ProductionPassword2026!"
+
+        # 1. Register profile
+        res_reg = self.app.post('/api/auth/register', json={
+            "name": f"Citizen {unique_num}",
+            "phone": test_phone,
+            "email": test_email,
+            "password": password,
+            "district": "Wayanad",
+            "lat": 11.5542,
+            "lng": 76.1308,
+            "role": "Citizen"
+        })
+        self.assertEqual(res_reg.status_code, 201)
+        reg_data = res_reg.get_json()
+        self.assertTrue(reg_data["success"])
+        self.assertEqual(reg_data["step"], "verify_email")
+        self.assertIn("dev_otp", reg_data)
+        otp = reg_data["dev_otp"]
+        self.assertEqual(len(otp), 6)
+
+        # 2. Reject incorrect OTP code
+        res_bad_otp = self.app.post('/api/auth/verify-email', json={
+            "email": test_email,
+            "code": "000000"
+        })
+        self.assertEqual(res_bad_otp.status_code, 400)
+
+        # 3. Verify with correct OTP
+        res_verify = self.app.post('/api/auth/verify-email', json={
+            "email": test_email,
+            "code": otp
+        })
+        self.assertEqual(res_verify.status_code, 200)
+        verify_data = res_verify.get_json()
+        self.assertTrue(verify_data["success"])
+        self.assertIn("token", verify_data)
+        self.assertEqual(verify_data["user"]["is_email_verified"], 1)
+
+        # 4. Dual Login via Mobile Phone
+        res_login_phone = self.app.post('/api/auth/login', json={
+            "identifier": test_phone,
+            "password": password
+        })
+        self.assertEqual(res_login_phone.status_code, 200)
+        self.assertEqual(res_login_phone.get_json()["user"]["phone"], test_phone)
+
+        # 5. Dual Login via Email Address
+        res_login_email = self.app.post('/api/auth/login', json={
+            "identifier": test_email,
+            "password": password
+        })
+        self.assertEqual(res_login_email.status_code, 200)
+        self.assertEqual(res_login_email.get_json()["user"]["email"], test_email)
+
 
 if __name__ == "__main__":
     print("=" * 65)

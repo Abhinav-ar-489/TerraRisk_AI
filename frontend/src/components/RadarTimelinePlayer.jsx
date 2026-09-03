@@ -41,9 +41,33 @@ export default function RadarTimelinePlayer({ isVisible, onFrameChange }) {
   };
 
   useEffect(() => {
+    let ignore = false;
     if (isVisible) {
-      fetchRadarData();
+      axios.get('https://api.rainviewer.com/public/weather-maps.json')
+        .then((res) => {
+          if (!ignore && res.data && res.data.radar) {
+            const radarHost = res.data.host || 'https://tilecache.rainviewer.com';
+            setHost(radarHost);
+
+            const pastFrames = res.data.radar.past || [];
+            const nowcastFrames = res.data.radar.nowcast || [];
+            const allFrames = [
+              ...pastFrames.map(f => ({ ...f, type: 'past' })),
+              ...nowcastFrames.map(f => ({ ...f, type: 'nowcast' }))
+            ];
+
+            setFrames(allFrames);
+            if (allFrames.length > 0) {
+              const latestPastIdx = pastFrames.length > 0 ? pastFrames.length - 1 : 0;
+              setCurrentIndex(latestPastIdx);
+            }
+          }
+        })
+        .catch((err) => {
+          console.error("RainViewer API fetch error:", err);
+        });
     }
+    return () => { ignore = true; };
   }, [isVisible]);
 
   // Update active tile URL whenever currentIndex or frames change
@@ -53,7 +77,7 @@ export default function RadarTimelinePlayer({ isVisible, onFrameChange }) {
       const tileUrl = `${host}${activeFrame.path}/256/{z}/{x}/{y}/2/1_1.png`;
       onFrameChange(tileUrl, activeFrame.time);
     }
-  }, [currentIndex, frames, host]);
+  }, [currentIndex, frames, host, onFrameChange]);
 
   // Playback timer
   useEffect(() => {

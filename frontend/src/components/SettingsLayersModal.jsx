@@ -1,5 +1,4 @@
-import { useState } from 'react';
-import { X, Sliders, Layers, PhoneCall, Radio, Eye, Sun, Moon, Map, CloudRain, Mountain, Activity, Check } from 'lucide-react';
+import { X, Sliders, PhoneCall, Sun, Moon, Map, Check } from 'lucide-react';
 import { BASE_LAYERS } from '../constants/mapLayers';
 
 export default function SettingsLayersModal({

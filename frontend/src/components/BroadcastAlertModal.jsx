@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { X, Send, Radio, AlertTriangle, Users, MapPin, Sparkles, Globe } from 'lucide-react';
-import axios from 'axios';
+import api from '../services/api';
 
 export default function BroadcastAlertModal({ isOpen, onClose, cluster, token, triggerToast, onBroadcastSuccess }) {
   const [radiusKm, setRadiusKm] = useState(5.0);
@@ -19,21 +19,19 @@ export default function BroadcastAlertModal({ isOpen, onClose, cluster, token, t
 
   // Fetch bilingual preview whenever cluster or radius changes
   useEffect(() => {
-    if (!isOpen || !token) return;
+    if (!isOpen) return;
 
     let isMounted = true;
     const timer = setTimeout(() => {
       setLoadingPreview(true);
       setError('');
 
-      axios.post('http://127.0.0.1:5000/api/alerts/preview', {
+      api.post('/api/alerts/preview', {
         lat,
         lng,
         radius_km: radiusKm,
         hazard_type: hazardType,
         severity: severity
-      }, {
-        headers: { Authorization: `Bearer ${token}` }
       })
         .then(res => {
           if (isMounted && res.data.success) {
@@ -58,7 +56,7 @@ export default function BroadcastAlertModal({ isOpen, onClose, cluster, token, t
       isMounted = false;
       clearTimeout(timer);
     };
-  }, [isOpen, radiusKm, hazardType, lat, lng, token]);
+  }, [isOpen, radiusKm, hazardType, severity, lat, lng, token]);
 
   if (!isOpen) return null;
 
@@ -73,15 +71,13 @@ export default function BroadcastAlertModal({ isOpen, onClose, cluster, token, t
     setError('');
 
     try {
-      const res = await axios.post('http://127.0.0.1:5000/api/alerts/broadcast', {
+      const res = await api.post('/api/alerts/broadcast', {
         lat,
         lng,
         radius_km: radiusKm,
         hazard_type: hazardType,
         alert_en: alertEn.trim(),
         alert_ml: alertMl.trim()
-      }, {
-        headers: { Authorization: `Bearer ${token}` }
       });
 
       if (res.data.success) {

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Layers, Sliders, Mountain, CloudRain, Check, ChevronDown, ChevronUp, Flame, ShieldAlert } from 'lucide-react';
+import { Layers, Sliders, Mountain, CloudRain, Check, ChevronDown, ChevronUp, Flame, ShieldAlert, X } from 'lucide-react';
 import { BASE_LAYERS } from '../constants/mapLayers';
 
 export default function MapLayersControl({
@@ -41,12 +41,22 @@ export default function MapLayersControl({
 
       {/* Layer Control Menu Card */}
       {isOpen && (
-        <div className="gis-layers-dropdown ios-glass">
-          <div className="gis-layers-header">
-            <span style={{ fontSize: '11.5px', fontWeight: '800', textTransform: 'uppercase', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <Sliders size={13} color="var(--accent)" /> GIS Visual Overlays
-            </span>
-          </div>
+        <>
+          <div className="gis-layers-mobile-backdrop" onClick={() => setIsOpen(false)} />
+          <div className="gis-layers-dropdown ios-glass">
+            <div className="gis-layers-header">
+              <span style={{ fontSize: '11.5px', fontWeight: '800', textTransform: 'uppercase', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Sliders size={13} color="var(--accent)" /> GIS Visual Overlays
+              </span>
+              <button
+                type="button"
+                className="gis-layers-close-btn"
+                onClick={() => setIsOpen(false)}
+                title="Close layers panel"
+              >
+                <X size={14} />
+              </button>
+            </div>
 
           {/* Base Layer Switcher */}
           <div className="gis-layer-section">
@@ -208,7 +218,8 @@ export default function MapLayersControl({
             </div>
           </div>
         </div>
-      )}
+      </>
+    )}
     </div>
   );
 }

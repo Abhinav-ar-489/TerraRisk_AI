@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
-import { X, Home, MapPin, Phone, Users, Shield, Plus, CheckCircle, Package } from 'lucide-react';
-import axios from 'axios';
+import { useState } from 'react';
+import { X, Home } from 'lucide-react';
+import api from '../services/api';
 
 const KERALA_DISTRICTS = [
   "Wayanad", "Idukki", "Malappuram", "Kozhikode", "Palakkad",
@@ -10,72 +10,36 @@ const KERALA_DISTRICTS = [
 export default function AddCampModal({
   isOpen,
   onClose,
-  token,
   editingShelter = null,
   onCampSaved,
   triggerToast
 }) {
-  const [name, setName] = useState('');
-  const [district, setDistrict] = useState('Wayanad');
-  const [lat, setLat] = useState('11.5510');
-  const [lng, setLng] = useState('76.1280');
-  const [capacity, setCapacity] = useState('300');
-  const [contactNumber, setContactNumber] = useState('');
-  const [inChargeName, setInChargeName] = useState('');
-  const [inChargePhone, setInChargePhone] = useState('');
-  const [status, setStatus] = useState('active');
+  const [name, setName] = useState(editingShelter?.name || '');
+  const [district, setDistrict] = useState(editingShelter?.district || 'Wayanad');
+  const [lat, setLat] = useState(String(editingShelter?.lat || '11.5510'));
+  const [lng, setLng] = useState(String(editingShelter?.lng || '76.1280'));
+  const [capacity, setCapacity] = useState(String(editingShelter?.capacity || '300'));
+  const [contactNumber, setContactNumber] = useState(editingShelter?.contact_number || (editingShelter ? '' : '+91 4936 282220'));
+  const [inChargeName, setInChargeName] = useState(editingShelter?.in_charge_name || '');
+  const [inChargePhone, setInChargePhone] = useState(editingShelter?.in_charge_phone || '');
+  const [status] = useState(editingShelter?.status || 'active');
 
   // Amenities
-  const [medicalPost, setMedicalPost] = useState(true);
-  const [powerBackup, setPowerBackup] = useState(true);
-  const [wheelchairAccessible, setWheelchairAccessible] = useState(true);
-  const [childCare, setChildCare] = useState(true);
+  const initialAmenities = editingShelter?.amenities || {};
+  const [medicalPost, setMedicalPost] = useState(editingShelter ? Boolean(initialAmenities.medical_post) : true);
+  const [powerBackup, setPowerBackup] = useState(editingShelter ? Boolean(initialAmenities.power_backup) : true);
+  const [wheelchairAccessible, setWheelchairAccessible] = useState(editingShelter ? Boolean(initialAmenities.wheelchair_accessible) : true);
+  const [childCare, setChildCare] = useState(editingShelter ? Boolean(initialAmenities.child_care) : true);
 
   // Initial Supplies
-  const [waterLitres, setWaterLitres] = useState('2500');
-  const [foodPackets, setFoodPackets] = useState('500');
-  const [medicalKits, setMedicalKits] = useState('30');
-  const [infantSupplies, setInfantSupplies] = useState('20');
-  const [fuelLitres, setFuelLitres] = useState('200');
+  const initialSupplies = editingShelter?.supplies || {};
+  const [waterLitres, setWaterLitres] = useState(String(initialSupplies.water_litres ?? '2500'));
+  const [foodPackets, setFoodPackets] = useState(String(initialSupplies.food_packets ?? '500'));
+  const [medicalKits, setMedicalKits] = useState(String(initialSupplies.medical_kits ?? '30'));
+  const [infantSupplies, setInfantSupplies] = useState(String(initialSupplies.infant_supplies ?? '20'));
+  const [fuelLitres, setFuelLitres] = useState(String(initialSupplies.fuel_litres ?? '200'));
 
   const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (editingShelter) {
-      setName(editingShelter.name || '');
-      setDistrict(editingShelter.district || 'Wayanad');
-      setLat(String(editingShelter.lat || '11.5510'));
-      setLng(String(editingShelter.lng || '76.1280'));
-      setCapacity(String(editingShelter.capacity || '300'));
-      setContactNumber(editingShelter.contact_number || '');
-      setInChargeName(editingShelter.in_charge_name || '');
-      setInChargePhone(editingShelter.in_charge_phone || '');
-      setStatus(editingShelter.status || 'active');
-
-      const amenities = editingShelter.amenities || {};
-      setMedicalPost(Boolean(amenities.medical_post));
-      setPowerBackup(Boolean(amenities.power_backup));
-      setWheelchairAccessible(Boolean(amenities.wheelchair_accessible));
-      setChildCare(Boolean(amenities.child_care));
-
-      const supplies = editingShelter.supplies || {};
-      setWaterLitres(String(supplies.water_litres ?? '2500'));
-      setFoodPackets(String(supplies.food_packets ?? '500'));
-      setMedicalKits(String(supplies.medical_kits ?? '30'));
-      setInfantSupplies(String(supplies.infant_supplies ?? '20'));
-      setFuelLitres(String(supplies.fuel_litres ?? '200'));
-    } else {
-      setName('');
-      setDistrict('Wayanad');
-      setLat('11.5510');
-      setLng('76.1280');
-      setCapacity('300');
-      setContactNumber('+91 4936 282220');
-      setInChargeName('');
-      setInChargePhone('');
-      setStatus('active');
-    }
-  }, [editingShelter, isOpen]);
 
   if (!isOpen) return null;
 
@@ -115,13 +79,9 @@ export default function AddCampModal({
     try {
       let res;
       if (editingShelter) {
-        res = await axios.put(`http://127.0.0.1:5000/api/shelters/${editingShelter.id}`, payload, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
+        res = await api.put(`/api/shelters/${editingShelter.id}`, payload);
       } else {
-        res = await axios.post('http://127.0.0.1:5000/api/shelters/create', payload, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
+        res = await api.post('/api/shelters/create', payload);
       }
 
       if (res.data.success) {

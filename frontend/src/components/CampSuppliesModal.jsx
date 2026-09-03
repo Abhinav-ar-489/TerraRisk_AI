@@ -1,32 +1,21 @@
-import { useState, useEffect } from 'react';
-import { X, Package, AlertTriangle, CheckCircle, Droplets, Utensils, HeartPulse, Baby, Fuel } from 'lucide-react';
-import axios from 'axios';
+import { useState } from 'react';
+import { X, Package, AlertTriangle, Droplets, Utensils, HeartPulse, Baby, Fuel } from 'lucide-react';
+import api from '../services/api';
 
 export default function CampSuppliesModal({
   isOpen,
   onClose,
   shelter,
-  token,
   onSuppliesUpdated,
   triggerToast
 }) {
-  const [waterLitres, setWaterLitres] = useState(2000);
-  const [foodPackets, setFoodPackets] = useState(500);
-  const [medicalKits, setMedicalKits] = useState(30);
-  const [infantSupplies, setInfantSupplies] = useState(20);
-  const [fuelLitres, setFuelLitres] = useState(150);
+  const s = shelter?.supplies || {};
+  const [waterLitres, setWaterLitres] = useState(s.water_litres ?? 2000);
+  const [foodPackets, setFoodPackets] = useState(s.food_packets ?? 500);
+  const [medicalKits, setMedicalKits] = useState(s.medical_kits ?? 30);
+  const [infantSupplies, setInfantSupplies] = useState(s.infant_supplies ?? 20);
+  const [fuelLitres, setFuelLitres] = useState(s.fuel_litres ?? 150);
   const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (shelter && shelter.supplies) {
-      const s = shelter.supplies;
-      setWaterLitres(s.water_litres ?? 2000);
-      setFoodPackets(s.food_packets ?? 500);
-      setMedicalKits(s.medical_kits ?? 30);
-      setInfantSupplies(s.infant_supplies ?? 20);
-      setFuelLitres(s.fuel_litres ?? 150);
-    }
-  }, [shelter, isOpen]);
 
   if (!isOpen || !shelter) return null;
 
@@ -42,10 +31,8 @@ export default function CampSuppliesModal({
     };
 
     try {
-      const res = await axios.post(`http://127.0.0.1:5000/api/shelters/${shelter.id}/supplies`, {
+      const res = await api.post(`/api/shelters/${shelter.id}/supplies`, {
         supplies: payload
-      }, {
-        headers: { Authorization: `Bearer ${token}` }
       });
 
       if (res.data.success) {

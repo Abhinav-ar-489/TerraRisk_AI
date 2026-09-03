@@ -1,0 +1,41 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: terrarisk_backend
+    restart: always
+    environment:
+      - FLASK_ENV=production
+      - PORT=5000
+      - DATABASE_PATH=/app/data/disaster_platform.db
+    env_file:
+      - ./backend/.env
+    volumes:
+      - backend_data:/app/data
+      - ./backend/models:/app/models:ro
+    ports:
+      - "5000:5000"
+    networks:
+      - terrarisk_net
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: terrarisk_frontend
+    restart: always
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - terrarisk_net
+
+volumes:
+  backend_data:
+    driver: local
+
+networks:
+  terrarisk_net:
+    driver: bridge

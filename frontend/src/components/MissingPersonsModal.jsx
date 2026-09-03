@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
-import { X, Search, AlertCircle, Plus, CheckCircle, UserX, Phone, MapPin, HeartPulse, Home } from 'lucide-react';
-import axios from 'axios';
+import { useState, useEffect, useCallback } from 'react';
+import { X, Search, AlertCircle, Plus, UserX, Phone, MapPin, HeartPulse, Home } from 'lucide-react';
+import api from '../services/api';
 
 export default function MissingPersonsModal({
   isOpen,
@@ -28,31 +28,49 @@ export default function MissingPersonsModal({
   // Status update modal / dropdown
   const isAuthorityOrVolunteer = user?.role === 'Authority_Admin' || user?.role === 'Volunteer';
 
-  const fetchMissingPersons = async () => {
+  const fetchMissingPersons = useCallback(async () => {
     setLoading(true);
     try {
-      let url = 'http://127.0.0.1:5000/api/missing-persons';
+      let url = '/api/missing-persons';
       const params = [];
       if (statusFilter !== 'all') params.push(`status=${statusFilter}`);
       if (searchQuery) params.push(`query=${encodeURIComponent(searchQuery)}`);
       if (params.length > 0) url += `?${params.join('&')}`;
 
-      const res = await axios.get(url);
+      const res = await api.get(url);
       if (res.data.success) {
         setPersons(res.data.missing_persons);
       }
-    } catch (err) {
+    } catch {
       console.log("Missing persons fetch gap.");
     } finally {
       setLoading(false);
     }
-  };
+  }, [statusFilter, searchQuery]);
 
   useEffect(() => {
+    let ignore = false;
     if (isOpen) {
-      fetchMissingPersons();
+      const load = async () => {
+        try {
+          let url = '/api/missing-persons';
+          const params = [];
+          if (statusFilter !== 'all') params.push(`status=${statusFilter}`);
+          if (searchQuery) params.push(`query=${encodeURIComponent(searchQuery)}`);
+          if (params.length > 0) url += `?${params.join('&')}`;
+
+          const res = await api.get(url);
+          if (!ignore && res.data.success) {
+            setPersons(res.data.missing_persons);
+          }
+        } catch {
+          console.log("Missing persons fetch gap.");
+        }
+      };
+      load();
     }
-  }, [isOpen, statusFilter]);
+    return () => { ignore = true; };
+  }, [isOpen, statusFilter, searchQuery]);
 
   if (!isOpen) return null;
 
@@ -70,15 +88,14 @@ export default function MissingPersonsModal({
 
     setSubmitting(true);
     try {
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const res = await axios.post('http://127.0.0.1:5000/api/missing-persons/report', {
+      const res = await api.post('/api/missing-persons/report', {
         name,
         age: age ? parseInt(age, 10) : null,
         gender,
         last_known_location: lastKnownLocation,
         contact_phone: contactPhone,
         medical_needs: medicalNeeds
-      }, { headers });
+      });
 
       if (res.data.success) {
         triggerToast(`✓ Missing person report for '${name}' registered in SOS Board.`, "success");
@@ -100,20 +117,18 @@ export default function MissingPersonsModal({
   };
 
   const handleUpdateStatus = async (personId, newStatus, shelterId = null) => {
-    if (!token) return;
+    if (!token && !localStorage.getItem('terrarisk_token')) return;
     try {
-      const res = await axios.post(`http://127.0.0.1:5000/api/missing-persons/${personId}/update-status`, {
+      const res = await api.post(`/api/missing-persons/${personId}/update-status`, {
         status: newStatus,
         located_at_shelter_id: shelterId
-      }, {
-        headers: { Authorization: `Bearer ${token}` }
       });
 
       if (res.data.success) {
         triggerToast(`✓ Status updated to '${newStatus.replace('_', ' ').toUpperCase()}'`, "success");
         fetchMissingPersons();
       }
-    } catch (err) {
+    } catch {
       triggerToast("Failed to update status.", "error");
     }
   };
@@ -204,15 +219,13 @@ export default function MissingPersonsModal({
               <div className="missing-cards-grid">
                 {persons.map(p => {
                   const isSafe = p.status === 'located_safe';
-                  const isHospital = p.status === 'hospitalized';
-                  const isSearch = p.status === 'search_in_progress';
                   const statusLabel = p.status ? p.status.replace(/_/g, ' ').toUpperCase() : 'MISSING';
 
                   return (
                     <div key={p.id} className={`missing-person-card ${isSafe ? 'safe' : ''}`}>
                       <div className="missing-card-top">
                         <div>
-                          <div style={{ fontWeight: '800', fontSize: '15px', color: 'var(--text-primary)' }}>
+                          <div style={{ fontWeight: '600', fontSize: '14.5px', color: 'var(--text-primary)' }}>
                             {p.name} {p.age ? `(${p.age} yrs, ${p.gender || 'M'})` : ''}
                           </div>
                           <div style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginTop: '2px' }}>

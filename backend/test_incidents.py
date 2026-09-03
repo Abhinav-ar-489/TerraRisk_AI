@@ -85,8 +85,8 @@ class TestPhase3IncidentReportingAndClustering(unittest.TestCase):
         )
         self.low_cred_token = generate_jwt_token({"id": u3_id, "phone": phone3, "role": "Citizen"})
 
-    def test_01_low_credibility_user_blocked(self):
-        """Verify user with credibility < 10 is blocked with 403 Forbidden."""
+    def test_01_unauthenticated_user_blocked(self):
+        """Verify unauthenticated user cannot report incidents."""
         payload = {
             "hazard_type": "mud_crack",
             "lat": self.base_lat,
@@ -96,13 +96,11 @@ class TestPhase3IncidentReportingAndClustering(unittest.TestCase):
         }
         res = self.app.post(
             '/api/incidents/report',
-            json=payload,
-            headers={"Authorization": f"Bearer {self.low_cred_token}"}
+            json=payload
         )
-        self.assertEqual(res.status_code, 403)
+        self.assertEqual(res.status_code, 401)
         data = res.get_json()
         self.assertFalse(data["success"])
-        self.assertIn("credibility score is below", data["error"])
 
     def test_02_first_incident_creates_new_cluster(self):
         """Verify initial report is assigned a new cluster ID and stored as pending."""
@@ -214,6 +212,83 @@ class TestPhase3IncidentReportingAndClustering(unittest.TestCase):
             self.assertIn("avg_severity", inc)
             self.assertIn("status", inc)
             self.assertGreaterEqual(inc["report_count"], 1)
+
+    def test_06_consensus_auto_verification_on_five_reports(self):
+        """Verify incident cluster is automatically verified when 5 reports are received in the same area."""
+        target_lat = self.base_lat + 0.85
+        target_lng = self.base_lng + 0.85
+        shared_cluster_id = None
+
+        # Submit 4 reports: each should be clustered and remain pending
+        for i in range(1, 5):
+            # Create a distinct user
+            phone = f"+9197{random.randint(10000000, 99999999)}"
+            uid = create_user(
+                name=f"Consensus Reporter {i} {self.unique_id}",
+                phone=phone,
+                password_hash=hash_password("Pass123!"),
+                lat=target_lat,
+                lng=target_lng,
+                district="Wayanad",
+                role="Citizen"
+            )
+            token = generate_jwt_token({"id": uid, "phone": phone, "role": "Citizen"})
+
+            res = self.app.post(
+                '/api/incidents/report',
+                json={
+                    "hazard_type": "blocked_road",
+                    "lat": target_lat + (i * 0.0002), # within 50-100m
+                    "lng": target_lng + (i * 0.0002),
+                    "description": f"Major rock debris blocking route, report #{i}",
+                    "severity": 4
+                },
+                headers={"Authorization": f"Bearer {token}"}
+            )
+            self.assertEqual(res.status_code, 201)
+            d = res.get_json()
+            shared_cluster_id = d["cluster_id"]
+            self.assertFalse(d["is_auto_verified"], f"Report {i} should not trigger auto-verification yet")
+
+        # Submit 5th report: consensus threshold reached! Should auto-verify!
+        phone5 = f"+9197{random.randint(10000000, 99999999)}"
+        uid5 = create_user(
+            name=f"Consensus Reporter 5 {self.unique_id}",
+            phone=phone5,
+            password_hash=hash_password("Pass123!"),
+            lat=target_lat,
+            lng=target_lng,
+            district="Wayanad",
+            role="Citizen"
+        )
+        token5 = generate_jwt_token({"id": uid5, "phone": phone5, "role": "Citizen"})
+
+        res5 = self.app.post(
+            '/api/incidents/report',
+            json={
+                "hazard_type": "blocked_road",
+                "lat": target_lat + 0.0001,
+                "lng": target_lng + 0.0001,
+                "description": "5th confirmation of severe road blockade",
+                "severity": 5
+            },
+            headers={"Authorization": f"Bearer {token5}"}
+        )
+        self.assertEqual(res5.status_code, 201)
+        d5 = res5.get_json()
+        self.assertEqual(d5["cluster_id"], shared_cluster_id)
+        self.assertTrue(d5["is_auto_verified"], "5th report must trigger AUTO-VERIFICATION")
+        self.assertGreaterEqual(d5["consensus_count"], 5)
+
+        # Verify cluster is marked 'verified' in /api/incidents/active
+        res_active = self.app.get('/api/incidents/active')
+        self.assertEqual(res_active.status_code, 200)
+        active_list = res_active.get_json()["incidents"]
+        matching_cluster = next((c for c in active_list if c["cluster_id"] == shared_cluster_id), None)
+        self.assertIsNotNone(matching_cluster, "Cluster must appear in active incidents list")
+        self.assertEqual(matching_cluster["status"], "verified", "Cluster status must be 'verified'")
+        self.assertTrue(matching_cluster["is_auto_verified"])
+        self.assertEqual(matching_cluster["report_count"], 5)
 
 
 if __name__ == "__main__":

@@ -120,11 +120,11 @@ class TestPhase4AuthorityTriageAndCredibility(unittest.TestCase):
         self.assertIn("active_verified_hazards", metrics)
         self.assertIn("active_field_volunteers", metrics)
 
-    def test_03_verify_cluster_rewards_citizen_credibility(self):
-        """Verify incident verification updates status to 'verified' and adds +10 to citizen credibility."""
+    def test_03_verify_cluster_verifies_citizen(self):
+        """Verify incident verification updates status to 'verified' and marks citizen as verified."""
         test_cluster_id = f"clust_ver_{self.unique_id}"
         
-        # Create pending incident report by citizen (credibility = 50)
+        # Create pending incident report by citizen
         rep_id = create_incident_report(
             user_id=self.cit_id,
             hazard_type="rockfall",
@@ -147,15 +147,15 @@ class TestPhase4AuthorityTriageAndCredibility(unittest.TestCase):
         self.assertTrue(data["success"])
         self.assertEqual(data["verified_reports_count"], 1)
 
-        # Check citizen's updated credibility score (50 -> 60)
+        # Check citizen's updated verification status (is_verified -> 1)
         updated_cit = get_user_by_id(self.cit_id)
-        self.assertEqual(updated_cit["credibility_score"], 60)
+        self.assertEqual(updated_cit["is_verified"], 1)
 
-    def test_04_reject_cluster_penalizes_citizen_credibility(self):
-        """Verify incident rejection updates status to 'rejected' and deducts -25 from citizen credibility."""
+    def test_04_reject_cluster_marks_rejected_cleanly(self):
+        """Verify incident rejection updates status to 'rejected'."""
         test_cluster_id = f"clust_rej_{self.unique_id}"
         
-        # Create pending incident report by citizen (credibility = 50)
+        # Create pending incident report by citizen
         rep_id = create_incident_report(
             user_id=self.cit_id,
             hazard_type="stream_overflow",
@@ -170,7 +170,7 @@ class TestPhase4AuthorityTriageAndCredibility(unittest.TestCase):
         # Authority Admin rejects cluster as spam
         res = self.app.post(
             '/api/incidents/reject',
-            json={"cluster_id": test_cluster_id, "reason": "Spam / Fabricated"},
+            json={"cluster_id": test_cluster_id, "reason": "False Alarm / Duplicate"},
             headers={"Authorization": f"Bearer {self.admin_token}"}
         )
         self.assertEqual(res.status_code, 200)
@@ -178,29 +178,49 @@ class TestPhase4AuthorityTriageAndCredibility(unittest.TestCase):
         self.assertTrue(data["success"])
         self.assertEqual(data["rejected_reports_count"], 1)
 
-        # Check citizen's updated credibility score (50 -> 25)
-        updated_cit = get_user_by_id(self.cit_id)
-        self.assertEqual(updated_cit["credibility_score"], 25)
+    def test_05_admin_direct_user_verification(self):
+        """Verify Authority Admin can directly set user verification."""
+        phone_cit = f"+9198{random.randint(10000000, 99999999)}"
+        u_id = create_user("Test Citizen", phone_cit, hash_password("Pass1!"), role="Citizen")
+        self.assertEqual(get_user_by_id(u_id)["is_verified"], 0)
 
-    def test_05_credibility_clamping_boundaries(self):
-        """Verify credibility score is clamped at max 100 on reward and min 0 on penalty."""
-        # 1. High Credibility Citizen (95) -> Reward +10 => should clamp to 100
-        phone_high = f"+9198{random.randint(10000000, 99999999)}"
-        u_high_id = create_user("High Cred User", phone_high, hash_password("Pass1!"), district="Wayanad", role="Citizen", credibility_score=95)
-        c_high = f"clust_high_{self.unique_id}"
-        create_incident_report(u_high_id, "mud_crack", 11.60, 76.14, "Crack", 3, cluster_id=c_high, status="pending")
+        # Admin verifies user
+        res = self.app.post(
+            '/api/authority/users/verify',
+            json={"user_id": u_id, "is_verified": True},
+            headers={"Authorization": f"Bearer {self.admin_token}"}
+        )
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(get_user_by_id(u_id)["is_verified"], 1)
 
-        verify_incident_cluster(c_high, verified_by_user_id=self.admin_id)
-        self.assertEqual(get_user_by_id(u_high_id)["credibility_score"], 100)
+    def test_06_resolve_cluster_marks_incident_cleared_and_removes_from_active(self):
+        """Verify resolving an incident cluster updates status to 'resolved' and clears it from active map feed."""
+        test_cluster_id = f"clust_res_{self.unique_id}"
+        
+        # 1. Create and verify incident
+        create_incident_report(self.cit_id, "blocked_road", 11.559, 76.136, "Debris blocking SH-54", 4, cluster_id=test_cluster_id, status="pending")
+        verify_incident_cluster(test_cluster_id, verified_by_user_id=self.admin_id)
+        
+        # 2. Check it is currently in active incidents
+        active_res = self.app.get('/api/incidents/active')
+        active_ids = [c["cluster_id"] for c in active_res.get_json()["incidents"]]
+        self.assertIn(test_cluster_id, active_ids)
 
-        # 2. Low Credibility Citizen (15) -> Penalty -25 => should clamp to 0 (not negative)
-        phone_low = f"+9198{random.randint(10000000, 99999999)}"
-        u_low_id = create_user("Low Cred User", phone_low, hash_password("Pass1!"), district="Wayanad", role="Citizen", credibility_score=15)
-        c_low = f"clust_low_{self.unique_id}"
-        create_incident_report(u_low_id, "slope_movement", 11.62, 76.15, "Creep", 2, cluster_id=c_low, status="pending")
+        # 3. Post to /api/incidents/resolve as Authority Admin
+        res = self.app.post(
+            '/api/incidents/resolve',
+            json={"cluster_id": test_cluster_id, "notes": "Road cleared by JCB crew. Traffic resumed."},
+            headers={"Authorization": f"Bearer {self.admin_token}"}
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertTrue(data["success"])
+        self.assertEqual(data["resolved_reports_count"], 1)
 
-        reject_incident_cluster(c_low, rejected_by_user_id=self.admin_id, reason="Resolved / Non-Threat")
-        self.assertEqual(get_user_by_id(u_low_id)["credibility_score"], 0)
+        # 4. Verify it is now removed from active incidents map feed
+        updated_active = self.app.get('/api/incidents/active')
+        updated_ids = [c["cluster_id"] for c in updated_active.get_json()["incidents"]]
+        self.assertNotIn(test_cluster_id, updated_ids)
 
 
 if __name__ == "__main__":
@@ -208,3 +228,4 @@ if __name__ == "__main__":
     print("RUNNING TERRARISK AI PHASE 4 AUTHORITY TRIAGE & CREDIBILITY SUITE")
     print("=" * 65)
     unittest.main(verbosity=2)
+

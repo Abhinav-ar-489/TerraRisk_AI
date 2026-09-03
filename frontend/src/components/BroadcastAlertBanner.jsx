@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Radio, Navigation, Home, X } from 'lucide-react';
 
-export default function BroadcastAlertBanner({ broadcasts, user, onFocusAlert, onFindShelter }) {
+export default function BroadcastAlertBanner({ broadcasts, currentCoords, onFocusAlert, onFindShelter }) {
   const [isDismissed, setIsDismissed] = useState(false);
   const [langTab, setLangTab] = useState('en'); // 'en' or 'ml'
 
@@ -10,15 +10,17 @@ export default function BroadcastAlertBanner({ broadcasts, user, onFocusAlert, o
   const currentAlert = broadcasts[0];
   if (!currentAlert) return null;
 
-  // Calculate distance from user to hazard if user coordinates available
+  // Calculate distance from current live location to hazard if coordinates available
   let distanceKm = null;
-  if (user?.lat && user?.lng && currentAlert.lat && currentAlert.lng) {
+  const curLat = currentCoords?.lat;
+  const curLng = currentCoords?.lng;
+  if (curLat && curLng && currentAlert.lat && currentAlert.lng) {
     const R = 6371; // km
-    const dLat = (currentAlert.lat - user.lat) * (Math.PI / 180);
-    const dLng = (currentAlert.lng - user.lng) * (Math.PI / 180);
+    const dLat = (currentAlert.lat - curLat) * (Math.PI / 180);
+    const dLng = (currentAlert.lng - curLng) * (Math.PI / 180);
     const a =
       Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos(user.lat * (Math.PI / 180)) *
+      Math.cos(curLat * (Math.PI / 180)) *
         Math.cos(currentAlert.lat * (Math.PI / 180)) *
         Math.sin(dLng / 2) *
         Math.sin(dLng / 2);

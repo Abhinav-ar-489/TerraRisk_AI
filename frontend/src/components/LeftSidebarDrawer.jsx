@@ -1,16 +1,14 @@
 import { 
-  X, AlertOctagon, Compass, ShieldAlert, Heart, UserX, 
-  Shield, Sliders, Navigation, PhoneCall, Award, LogOut, 
-  User, Sun, Moon, Radio, Activity, CheckCircle, Flame
+  X, Compass, ShieldAlert, HeartHandshake, UserX, 
+  Shield, ShieldCheck, Sliders, Navigation, PhoneCall, LogOut, 
+  User, Sun, Moon, CheckCircle, Flame
 } from 'lucide-react';
 
 export default function LeftSidebarDrawer({
   isOpen,
   onClose,
-  onOpenSOS,
   onOpenSafeRoute,
   onOpenReportHazard,
-  onOpenFamilySafety,
   onOpenMissingPersons,
   onOpenAuthoritySuite,
   onOpenSettings,
@@ -27,8 +25,7 @@ export default function LeftSidebarDrawer({
 }) {
   if (!isOpen) return null;
 
-  const credScore = user?.credibility_score ?? 50;
-  const credColor = credScore >= 80 ? '#30D158' : credScore >= 50 ? '#38BDF8' : '#FF9F0A';
+  const isVerified = user?.is_verified || user?.role === 'Authority_Admin';
 
   const handleAction = (callback) => {
     onClose();
@@ -65,19 +62,6 @@ export default function LeftSidebarDrawer({
           </div>
           <div className="sidebar-nav-group">
             <button 
-              className="sidebar-nav-item item-sos"
-              onClick={() => handleAction(onOpenSOS)}
-            >
-              <div className="sidebar-item-icon sos-icon">
-                <AlertOctagon size={16} />
-              </div>
-              <div className="sidebar-item-text">
-                <span className="item-label">Emergency SOS Beacon</span>
-                <span className="item-desc">Offline Cellular GPS Distress Ping</span>
-              </div>
-            </button>
-
-            <button 
               className="sidebar-nav-item item-route"
               onClick={() => handleAction(onOpenSafeRoute)}
               disabled={planningRoute}
@@ -105,25 +89,12 @@ export default function LeftSidebarDrawer({
             </button>
           </div>
 
-          {/* Group 2: Community & Family */}
+          {/* Group 2: Community & Relief */}
           <div className="sidebar-section-title">
-            <Heart size={12} color="#EC4899" />
+            <HeartHandshake size={12} color="#38BDF8" />
             <span>COMMUNITY & RELIEF</span>
           </div>
           <div className="sidebar-nav-group">
-            <button 
-              className="sidebar-nav-item"
-              onClick={() => handleAction(onOpenFamilySafety)}
-            >
-              <div className="sidebar-item-icon family-icon">
-                <Heart size={16} />
-              </div>
-              <div className="sidebar-item-text">
-                <span className="item-label">Family Safety Circle</span>
-                <span className="item-desc">1-Tap 'I Am Safe' Status Beacon</span>
-              </div>
-            </button>
-
             <button 
               className="sidebar-nav-item"
               onClick={() => handleAction(onOpenMissingPersons)}
@@ -151,8 +122,8 @@ export default function LeftSidebarDrawer({
             </button>
           </div>
 
-          {/* Group 3: Command Suite — Authority_Admin only */}
-          {user?.role === 'Authority_Admin' && (
+          {/* Group 3: Command Suite (Strictly restricted to Authority Officers & Volunteers) */}
+          {user && (user.role === 'Authority_Admin' || user.role === 'Volunteer') && (
             <>
               <div className="sidebar-section-title">
                 <Shield size={12} color="#3B82F6" />
@@ -167,7 +138,10 @@ export default function LeftSidebarDrawer({
                     <Shield size={16} />
                   </div>
                   <div className="sidebar-item-text">
-                    <span className="item-label">Command Center Suite</span>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span className="item-label">Command Center Suite</span>
+                      <span className="ksdma-tag" style={{ fontSize: '9px', padding: '1px 6px' }}>OFFICER / SEOC</span>
+                    </div>
                     <span className="item-desc">Camp Manager, CV Triage, SitRep PDF</span>
                   </div>
                 </button>
@@ -204,8 +178,8 @@ export default function LeftSidebarDrawer({
                   <Navigation size={16} />
                 </div>
                 <div className="sidebar-item-text">
-                  <span className="item-label">{checkingSafety ? 'Evaluating Location...' : 'Check My Registered Area'}</span>
-                  <span className="item-desc">Hazard Index for {user.district || 'Home'}</span>
+                  <span className="item-label">{checkingSafety ? 'Evaluating Location...' : 'Check Location Safety'}</span>
+                  <span className="item-desc">Live Hazard & Shelter Status</span>
                 </div>
               </button>
             )}
@@ -226,8 +200,12 @@ export default function LeftSidebarDrawer({
                     {user.role === 'Authority_Admin' ? 'ADMIN' : user.role === 'Volunteer' ? 'VOLUNTEER' : 'CITIZEN'}
                   </span>
                 </div>
-                <span className="sidebar-credibility-text" style={{ color: credColor }}>
-                  <Award size={10} /> Credibility: {credScore}/100
+                <span className="sidebar-credibility-text" style={{ color: isVerified ? '#30D158' : '#94A3B8', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  {isVerified ? (
+                    <><ShieldCheck size={11} color="#30D158" /> Verified Account</>
+                  ) : (
+                    <><CheckCircle size={11} color="#94A3B8" /> Active Citizen</>
+                  )}
                 </span>
               </div>
               <button 

@@ -217,7 +217,7 @@ def dispatch_multi_channel_alert(
     3. Twilio SMS / Simulated Local Dispatch
     4. CAP Standard Feeds & Audit Logging
     """
-    from database import get_users_in_radius, log_audit_action
+    from database import get_users_in_radius, log_audit_action, save_emergency_broadcast
     
     recipients = get_users_in_radius(lat=lat, lng=lng, radius_km=radius_km, db_path=db_path)
     combined_message = f"🚨 KSDMA ALERT ({radius_km}km Radius):\n{alert_en}\n---\n{alert_ml}"
@@ -274,6 +274,10 @@ def dispatch_multi_channel_alert(
         "sent_at": datetime.now(timezone.utc).isoformat()
     }
     ACTIVE_BROADCASTS.append(broadcast_record)
+    try:
+        save_emergency_broadcast(broadcast_record, db_path=db_path)
+    except Exception as err:
+        print(f"[WARNING] Could not persist broadcast to DB: {err}")
     
     # 5. Audit log
     log_audit_action(
@@ -313,18 +317,40 @@ def dispatch_geofenced_sms(
     )
 
 
-def get_active_broadcasts(hours_window: float = 24.0) -> List[Dict[str, Any]]:
+def get_active_broadcasts(hours_window: float = 24.0, db_path: Optional[str] = None) -> List[Dict[str, Any]]:
     now_ts = time.time()
     cutoff_ts = now_ts - (hours_window * 3600)
     
+    # Fetch persisted records from SQLite database first
+    try:
+        from database import get_persisted_emergency_broadcasts
+        persisted = get_persisted_emergency_broadcasts(hours_window=hours_window, db_path=db_path)
+    except Exception:
+        persisted = []
+        
+    seen_ids = set()
     valid_broadcasts = []
-    for b in ACTIVE_BROADCASTS:
-        try:
-            sent_dt = datetime.fromisoformat(b["sent_at"].replace('Z', '+00:00'))
-            if sent_dt.timestamp() >= cutoff_ts:
+    
+    # Merge memory broadcasts (latest first)
+    for b in reversed(ACTIVE_BROADCASTS):
+        bid = b.get("broadcast_id")
+        if bid and bid not in seen_ids:
+            try:
+                sent_dt = datetime.fromisoformat(b["sent_at"].replace('Z', '+00:00'))
+                if sent_dt.timestamp() >= cutoff_ts:
+                    seen_ids.add(bid)
+                    valid_broadcasts.append(b)
+            except Exception:
+                seen_ids.add(bid)
                 valid_broadcasts.append(b)
-        except Exception:
-            valid_broadcasts.append(b)
+                
+    # Merge persisted database broadcasts
+    for p in persisted:
+        pid = p.get("broadcast_id")
+        if pid and pid not in seen_ids:
+            seen_ids.add(pid)
+            valid_broadcasts.append(p)
+            
     return valid_broadcasts
 
 

@@ -1,10 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
-  Shield, AlertTriangle, CheckCircle, X, RefreshCw, Users, Award, Radio,
-  Clock, ThumbsDown, Filter, FileText, AlertOctagon, Home, Plus, Edit3,
-  Trash2, Package, Sparkles, UserCheck, Send, MapPin, Phone
+  Shield, AlertTriangle, CheckCircle, X, RefreshCw, Radio,
+  ThumbsDown, Filter, FileText, Home, Plus, Edit3,
+  Trash2, Package, Sparkles, UserCheck
 } from 'lucide-react';
-import axios from 'axios';
+import api from '../services/api';
 import BroadcastAlertModal from './BroadcastAlertModal';
 import AddCampModal from './AddCampModal';
 import CampSuppliesModal from './CampSuppliesModal';
@@ -39,6 +39,7 @@ export default function AuthorityDashboard({
   const [missions, setMissions] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selectedCluster, setSelectedCluster] = useState(null);
+  const [statusFilter, setStatusFilter] = useState('all'); // 'all' | 'pending' | 'verified'
   const [filterType, setFilterType] = useState('all');
   const [actionLoading, setActionLoading] = useState(false);
   const [downloadingSitRep, setDownloadingSitRep] = useState(false);
@@ -56,45 +57,24 @@ export default function AuthorityDashboard({
   const [campSearch, setCampSearch] = useState('');
   const [campDistrictFilter, setCampDistrictFilter] = useState('all');
 
-  const fetchTriageData = async () => {
-    let activeToken = token || localStorage.getItem('terrarisk_token');
-    
-    // Auto-acquire KSDMA Authority demo token if missing
-    if (!activeToken) {
-      try {
-        const authRes = await axios.post('http://127.0.0.1:5000/api/auth/login', {
-          phone: '+919999900000',
-          password: 'Admin@Terra2026!'
-        });
-        if (authRes.data.success && authRes.data.token) {
-          activeToken = authRes.data.token;
-          localStorage.setItem('terrarisk_token', activeToken);
-          localStorage.setItem('terrarisk_user', JSON.stringify(authRes.data.user));
-        }
-      } catch (authErr) {
-        console.warn("Auto-token acquisition fallback:", authErr);
-      }
-    }
-
+  const fetchTriageData = useCallback(async () => {
     setLoading(true);
     try {
-      const authHeaders = activeToken ? { Authorization: `Bearer ${activeToken}` } : {};
       const [clustersRes, metricsRes, sheltersRes, missionsRes] = await Promise.all([
-        axios.get('http://127.0.0.1:5000/api/authority/pending-clusters', { headers: authHeaders }),
-        axios.get('http://127.0.0.1:5000/api/authority/metrics', { headers: authHeaders }),
-        axios.get('http://127.0.0.1:5000/api/shelters'),
-        axios.get('http://127.0.0.1:5000/api/authority/missions', { headers: authHeaders }).catch(() => ({ data: { success: true, missions: [] } }))
+        api.get('/api/authority/pending-clusters?status=all'),
+        api.get('/api/authority/metrics'),
+        api.get('/api/shelters'),
+        api.get('/api/authority/missions').catch(() => ({ data: { success: true, missions: [] } }))
       ]);
 
       if (clustersRes.data.success) {
         setClusters(clustersRes.data.clusters || []);
         if (clustersRes.data.clusters && clustersRes.data.clusters.length > 0) {
-          if (!selectedCluster) {
-            setSelectedCluster(clustersRes.data.clusters[0]);
-          } else {
-            const updated = clustersRes.data.clusters.find(c => c.cluster_id === selectedCluster.cluster_id);
-            setSelectedCluster(updated || clustersRes.data.clusters[0]);
-          }
+          setSelectedCluster(prev => {
+            if (!prev) return clustersRes.data.clusters[0];
+            const updated = clustersRes.data.clusters.find(c => c.cluster_id === prev.cluster_id);
+            return updated || clustersRes.data.clusters[0];
+          });
         } else {
           setSelectedCluster(null);
         }
@@ -109,28 +89,54 @@ export default function AuthorityDashboard({
     } finally {
       setLoading(false);
     }
-  };
+  }, [triggerToast]);
 
   useEffect(() => {
+    let ignore = false;
     if (isOpen) {
-      fetchTriageData();
+      const load = async () => {
+        try {
+          const [clustersRes, metricsRes, sheltersRes, missionsRes] = await Promise.all([
+            api.get('/api/authority/pending-clusters?status=all'),
+            api.get('/api/authority/metrics'),
+            api.get('/api/shelters'),
+            api.get('/api/authority/missions').catch(() => ({ data: { success: true, missions: [] } }))
+          ]);
+
+          if (!ignore) {
+            if (clustersRes.data.success) {
+              setClusters(clustersRes.data.clusters || []);
+              if (clustersRes.data.clusters && clustersRes.data.clusters.length > 0) {
+                setSelectedCluster(clustersRes.data.clusters[0]);
+              } else {
+                setSelectedCluster(null);
+              }
+            }
+            if (metricsRes.data.success) setMetrics(metricsRes.data.metrics);
+            if (sheltersRes.data.success) setShelters(sheltersRes.data.shelters || []);
+            if (missionsRes.data.success) setMissions(missionsRes.data.missions || []);
+          }
+        } catch {
+          console.error("Initial triage load error.");
+        }
+      };
+      load();
     }
+    return () => { ignore = true; };
   }, [isOpen]);
 
   if (!isOpen) return null;
 
   const handleVerify = async () => {
-    if (!selectedCluster || !token) return;
+    if (!selectedCluster) return;
     setActionLoading(true);
     try {
-      const res = await axios.post('http://127.0.0.1:5000/api/incidents/verify', {
+      const res = await api.post('/api/incidents/verify', {
         cluster_id: selectedCluster.cluster_id
-      }, {
-        headers: { Authorization: `Bearer ${token}` }
       });
 
       if (res.data.success) {
-        triggerToast(`✓ Hazard confirmed. +10 credibility awarded to citizens.`, "success");
+        triggerToast(`✓ Hazard confirmed and verified by Authority.`, "success");
         if (onClusterUpdated) onClusterUpdated();
         await fetchTriageData();
       } else {
@@ -144,18 +150,16 @@ export default function AuthorityDashboard({
   };
 
   const handleReject = async () => {
-    if (!selectedCluster || !token) return;
+    if (!selectedCluster) return;
     setActionLoading(true);
     try {
-      const res = await axios.post('http://127.0.0.1:5000/api/incidents/reject', {
+      const res = await api.post('/api/incidents/reject', {
         cluster_id: selectedCluster.cluster_id,
         reason: selectedRejectReason
-      }, {
-        headers: { Authorization: `Bearer ${token}` }
       });
 
       if (res.data.success) {
-        triggerToast(`Cluster rejected. -25 credibility penalty applied to reporting citizens.`, "info");
+        triggerToast(`Cluster marked as rejected (${selectedRejectReason || 'False Alarm'}).`, "info");
         setRejectModalOpen(false);
         if (onClusterUpdated) onClusterUpdated();
         await fetchTriageData();
@@ -169,29 +173,48 @@ export default function AuthorityDashboard({
     }
   };
 
+  const handleResolve = async () => {
+    if (!selectedCluster) return;
+    setActionLoading(true);
+    try {
+      const res = await api.post('/api/incidents/resolve', {
+        cluster_id: selectedCluster.cluster_id,
+        notes: "Site cleared and hazard mitigated by field emergency response crew."
+      });
+
+      if (res.data.success) {
+        triggerToast(`✓ Disaster site marked as CLEARED & RESOLVED. Pin removed from live map.`, "success");
+        if (onClusterUpdated) onClusterUpdated();
+        await fetchTriageData();
+      } else {
+        triggerToast(res.data.error || "Resolution update failed.", "error");
+      }
+    } catch (err) {
+      triggerToast(err.response?.data?.error || "Resolution request error.", "error");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const handleDeleteCamp = async (shelterId, shelterName) => {
     if (!confirm(`Are you sure you want to delete relief camp '${shelterName}'?`)) return;
     try {
-      const res = await axios.delete(`http://127.0.0.1:5000/api/shelters/${shelterId}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await api.delete(`/api/shelters/${shelterId}`);
       if (res.data.success) {
         triggerToast(`✓ Relief camp '${shelterName}' deleted.`, "info");
         fetchTriageData();
       }
-    } catch (err) {
+    } catch {
       triggerToast("Failed to delete shelter.", "error");
     }
   };
 
   const handleExportSitRep = async () => {
-    if (!token) return;
     setDownloadingSitRep(true);
     if (triggerToast) triggerToast("Compiling official KSDMA Situation Report (SitRep)...", "info");
 
     try {
-      const res = await axios.get('http://127.0.0.1:5000/api/authority/export-sitrep?format=pdf', {
-        headers: { Authorization: `Bearer ${token}` },
+      const res = await api.get('/api/authority/export-sitrep?format=pdf', {
         responseType: 'blob'
       });
 
@@ -206,16 +229,21 @@ export default function AuthorityDashboard({
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
       if (triggerToast) triggerToast("✓ Official SitRep PDF downloaded successfully.", "success");
-    } catch (err) {
+    } catch {
       if (triggerToast) triggerToast("Failed to compile SitRep document.", "error");
     } finally {
       setDownloadingSitRep(false);
     }
   };
 
+  const pendingCount = clusters.filter(c => c.status === 'pending').length;
+  const verifiedCount = clusters.filter(c => c.status === 'verified').length;
+  const allCount = clusters.length;
+
   const filteredClusters = clusters.filter(c => {
-    if (filterType === 'all') return true;
-    return c.primary_hazard_type === filterType;
+    const matchesStatus = statusFilter === 'all' || c.status === statusFilter;
+    const matchesHazard = filterType === 'all' || c.primary_hazard_type === filterType;
+    return matchesStatus && matchesHazard;
   });
 
   const filteredShelters = shelters.filter(s => {
@@ -258,15 +286,27 @@ export default function AuthorityDashboard({
         {/* Metrics Ribbon */}
         {metrics && (
           <div className="triage-metrics-ribbon">
-            <div className="metric-pill">
+            <div
+              className={`metric-pill clickable ${statusFilter === 'pending' && activeTab === 'triage' ? 'active' : ''}`}
+              onClick={() => { setStatusFilter('pending'); setActiveTab('triage'); }}
+              title="Click to view pending citizen reports"
+            >
               <span className="metric-lbl">Pending Triage</span>
-              <span className="metric-val" style={{ color: '#FF9F0A' }}>{metrics.pending_clusters_count}</span>
+              <span className="metric-val" style={{ color: '#FF9F0A' }}>{pendingCount || metrics.pending_clusters_count || 0}</span>
             </div>
-            <div className="metric-pill">
+            <div
+              className={`metric-pill clickable ${statusFilter === 'verified' && activeTab === 'triage' ? 'active' : ''}`}
+              onClick={() => { setStatusFilter('verified'); setActiveTab('triage'); }}
+              title="Click to view verified active hazards on live map"
+            >
               <span className="metric-lbl">Verified Hazards</span>
-              <span className="metric-val" style={{ color: '#EF4444' }}>{metrics.active_verified_hazards}</span>
+              <span className="metric-val" style={{ color: '#EF4444' }}>{verifiedCount || metrics.active_verified_hazards || 0}</span>
             </div>
-            <div className="metric-pill">
+            <div
+              className={`metric-pill clickable ${activeTab === 'camps' ? 'active' : ''}`}
+              onClick={() => setActiveTab('camps')}
+              title="Click to view relief shelters"
+            >
               <span className="metric-lbl">Relief Camps</span>
               <span className="metric-val" style={{ color: '#38BDF8' }}>{shelters.length}</span>
             </div>
@@ -274,7 +314,11 @@ export default function AuthorityDashboard({
               <span className="metric-lbl">Active Missing</span>
               <span className="metric-val" style={{ color: '#EC4899' }}>{metrics.active_missing_persons || 0}</span>
             </div>
-            <div className="metric-pill">
+            <div
+              className={`metric-pill clickable ${activeTab === 'missions' ? 'active' : ''}`}
+              onClick={() => setActiveTab('missions')}
+              title="Click to view volunteer missions"
+            >
               <span className="metric-lbl">Volunteers</span>
               <span className="metric-val" style={{ color: '#30D158' }}>{metrics.active_field_volunteers}</span>
             </div>
@@ -288,7 +332,7 @@ export default function AuthorityDashboard({
             onClick={() => setActiveTab('triage')}
           >
             <AlertTriangle size={16} />
-            <span>Hazard Triage & CV ({clusters.length})</span>
+            <span>Hazard Triage & Verified ({clusters.length})</span>
           </button>
 
           <button
@@ -316,11 +360,39 @@ export default function AuthorityDashboard({
           </button>
         </div>
 
-        {/* TAB 1: INCIDENT TRIAGE & CV */}
+        {/* TAB 1: INCIDENT TRIAGE & RECTIFICATION */}
         {activeTab === 'triage' && (
           <div className="triage-split-body">
             {/* Left Queue Panel */}
             <div className="triage-queue-panel">
+              {/* Status Segmented Pill Filter */}
+              <div className="triage-status-bar">
+                <button
+                  className={`triage-status-tab ${statusFilter === 'all' ? 'active' : ''}`}
+                  onClick={() => setStatusFilter('all')}
+                  type="button"
+                >
+                  <span>All Active</span>
+                  <span className="triage-tab-count">{allCount}</span>
+                </button>
+                <button
+                  className={`triage-status-tab tab-pending ${statusFilter === 'pending' ? 'active' : ''}`}
+                  onClick={() => setStatusFilter('pending')}
+                  type="button"
+                >
+                  <span>Pending</span>
+                  <span className="triage-tab-count">{pendingCount}</span>
+                </button>
+                <button
+                  className={`triage-status-tab tab-verified ${statusFilter === 'verified' ? 'active' : ''}`}
+                  onClick={() => setStatusFilter('verified')}
+                  type="button"
+                >
+                  <span>Verified Live</span>
+                  <span className="triage-tab-count">{verifiedCount}</span>
+                </button>
+              </div>
+
               <div className="triage-queue-header">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <Filter size={14} color="var(--text-tertiary)" />
@@ -333,7 +405,7 @@ export default function AuthorityDashboard({
                   value={filterType}
                   onChange={(e) => setFilterType(e.target.value)}
                 >
-                  <option value="all">All ({clusters.length})</option>
+                  <option value="all">All Hazards ({clusters.length})</option>
                   <option value="mud_crack">Mud Cracks</option>
                   <option value="stream_overflow">Stream Overflow</option>
                   <option value="rockfall">Rockfall</option>
@@ -346,7 +418,11 @@ export default function AuthorityDashboard({
                 <div className="triage-empty-state">
                   <CheckCircle size={32} color="#30D158" />
                   <p style={{ margin: '8px 0 0', fontSize: '13px', color: 'var(--text-secondary)' }}>
-                    All citizen hazard reports triaged and resolved.
+                    {statusFilter === 'pending'
+                      ? "No pending citizen hazard reports in queue."
+                      : statusFilter === 'verified'
+                      ? "No verified active hazard zones currently logged."
+                      : "All citizen hazard reports triaged and resolved."}
                   </p>
                 </div>
               ) : (
@@ -355,11 +431,12 @@ export default function AuthorityDashboard({
                     const isSelected = selectedCluster?.cluster_id === cluster.cluster_id;
                     const hazardInfo = HAZARD_LABELS[cluster.primary_hazard_type] || HAZARD_LABELS.slope_movement;
                     const hasCV = cluster.max_ai_confidence && cluster.max_ai_confidence >= 0.6;
+                    const isVerified = cluster.status === 'verified';
 
                     return (
                       <div
                         key={cluster.cluster_id}
-                        className={`triage-cluster-card ${isSelected ? 'selected' : ''}`}
+                        className={`triage-cluster-card is-${cluster.status} ${isSelected ? 'selected' : ''}`}
                         onClick={() => setSelectedCluster(cluster)}
                       >
                         <div className="cluster-card-top">
@@ -369,8 +446,8 @@ export default function AuthorityDashboard({
                               {hazardInfo.name}
                             </span>
                           </div>
-                          <span className="priority-score-badge">
-                            Priority: {cluster.priority_score}
+                          <span className={`cluster-status-pill ${cluster.status}`}>
+                            {isVerified ? '🛡️ Verified' : '⚠️ Pending'}
                           </span>
                         </div>
 
@@ -409,6 +486,9 @@ export default function AuthorityDashboard({
                         <h3 className="inspection-title">
                           {HAZARD_LABELS[selectedCluster.primary_hazard_type]?.name}
                         </h3>
+                        <span className={`cluster-status-pill ${selectedCluster.status}`}>
+                          {selectedCluster.status === 'verified' ? '🛡️ Verified on Map' : '⚠️ Pending Triage'}
+                        </span>
                       </div>
                       <span className="inspection-cluster-id">Cluster ID: {selectedCluster.cluster_id}</span>
                     </div>
@@ -424,6 +504,21 @@ export default function AuthorityDashboard({
                       </button>
                     </div>
                   </div>
+
+                  {/* Verified Notice Banner */}
+                  {selectedCluster.status === 'verified' && (
+                    <div className="verified-banner-strip">
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Shield size={16} color="#30D158" />
+                        <strong style={{ fontSize: '12.5px', color: '#30D158' }}>
+                          VERIFIED HAZARD • BROADCASTING ON LIVE MAP & ROUTING
+                        </strong>
+                      </div>
+                      <p style={{ margin: 0, fontSize: '11.5px', color: 'var(--text-secondary)' }}>
+                        This hazard is actively broadcasted to all citizens and avoided by evacuation routing. Once the field disaster response or road clearance crew has cleared and rectified the site, click <strong>Disaster Site Rectified</strong> below to immediately remove this marker from the public map.
+                      </p>
+                    </div>
+                  )}
 
                   {/* AI Vision Intelligence Strip */}
                   <div className="cv-intelligence-card">
@@ -451,8 +546,8 @@ export default function AuthorityDashboard({
                       <span className="stat-value" style={{ color: '#EF4444' }}>{selectedCluster.max_severity} / 5</span>
                     </div>
                     <div className="inspection-stat-card">
-                      <span className="stat-label">Avg Reporter Credibility</span>
-                      <span className="stat-value" style={{ color: '#38BDF8' }}>{selectedCluster.avg_reporter_credibility} pts</span>
+                      <span className="stat-label">Verified Reporters</span>
+                      <span className="stat-value" style={{ color: '#30D158' }}>{selectedCluster.verified_reporters_count ?? 0} / {selectedCluster.report_count}</span>
                     </div>
                   </div>
 
@@ -466,7 +561,7 @@ export default function AuthorityDashboard({
                             <div>
                               <strong style={{ fontSize: '13px', color: 'var(--text-primary)' }}>{rep.reporter_name || "Citizen"}</strong>
                               <span style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginLeft: '6px' }}>
-                                ({rep.reporter_role || "Citizen"} • Credibility: {rep.reporter_credibility ?? 50})
+                                ({rep.reporter_role || "Citizen"} • {rep.reporter_is_verified ? <span style={{ color: '#30D158' }}>✓ Verified</span> : 'Unverified'})
                               </span>
                             </div>
                             <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Sev {rep.severity}/5</span>
@@ -479,32 +574,71 @@ export default function AuthorityDashboard({
                     </div>
                   </div>
 
-                  {/* Verification Decision Buttons */}
+                  {/* Verification & Rectification Decision Buttons */}
                   <div className="inspection-decision-strip">
-                    <button
-                      className="btn-triage-reject"
-                      onClick={() => setRejectModalOpen(true)}
-                      disabled={actionLoading}
-                    >
-                      <ThumbsDown size={16} />
-                      <span>Reject Cluster (-25 Credibility)</span>
-                    </button>
+                    {selectedCluster.status === 'verified' ? (
+                      <>
+                        <button
+                          className="btn-triage-reject"
+                          onClick={() => setRejectModalOpen(true)}
+                          disabled={actionLoading}
+                          title="Revoke / Reject hazard"
+                        >
+                          <ThumbsDown size={16} />
+                          <span>Revoke / Reject</span>
+                        </button>
 
-                    <button
-                      className="btn-triage-verify"
-                      onClick={handleVerify}
-                      disabled={actionLoading}
-                    >
-                      <CheckCircle size={16} />
-                      <span>Confirm & Verify Hazard (+10 Credibility)</span>
-                    </button>
+                        <button
+                          className="btn-triage-resolve"
+                          style={{ flex: 2, background: 'linear-gradient(135deg, #0284C7 0%, #0369A1 100%)', color: '#FFF' }}
+                          onClick={handleResolve}
+                          disabled={actionLoading}
+                          title="Disaster site is rectified & cleared - immediately remove pin from map without penalty"
+                        >
+                          <CheckCircle size={17} />
+                          <span>✓ Disaster Site Rectified (Mark Cleared & Remove from Map)</span>
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          className="btn-triage-reject"
+                          onClick={() => setRejectModalOpen(true)}
+                          disabled={actionLoading}
+                          title="Reject false report or duplicate"
+                        >
+                          <ThumbsDown size={16} />
+                          <span>Reject False Alarm</span>
+                        </button>
+
+                        <button
+                          className="btn-triage-resolve"
+                          onClick={handleResolve}
+                          disabled={actionLoading}
+                          title="Disaster site is safe and clear - immediately remove pin from map without penalty"
+                        >
+                          <CheckCircle size={16} />
+                          <span>Mark Cleared</span>
+                        </button>
+
+                        <button
+                          className="btn-triage-verify"
+                          onClick={handleVerify}
+                          disabled={actionLoading}
+                          title="Confirm real hazard and verify cluster"
+                        >
+                          <Shield size={16} />
+                          <span>Confirm & Verify Hazard</span>
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
               ) : (
                 <div className="triage-empty-state">
                   <Shield size={36} color="var(--text-tertiary)" />
                   <p style={{ margin: '8px 0 0', fontSize: '13px', color: 'var(--text-secondary)' }}>
-                    Select an incident cluster from the left queue to inspect.
+                    Select an incident cluster from the left queue to inspect and manage.
                   </p>
                 </div>
               )}
@@ -687,7 +821,7 @@ export default function AuthorityDashboard({
                 Reject Incident Cluster
               </h3>
               <p style={{ margin: '0 0 12px', fontSize: '12px', color: 'var(--text-secondary)' }}>
-                This will deduct a <strong>-25 credibility penalty</strong> from all reporting citizens in this cluster.
+                Rejecting this incident cluster will mark the reports as false alarm or duplicate.
               </p>
 
               <select
@@ -717,7 +851,7 @@ export default function AuthorityDashboard({
             onClose={() => setBroadcastModalOpen(false)}
             cluster={selectedCluster}
             user={user}
-            token={token}
+            token={token || localStorage.getItem('terrarisk_token') || ''}
             triggerToast={triggerToast}
           />
         )}
@@ -726,7 +860,7 @@ export default function AuthorityDashboard({
           <AddCampModal
             isOpen={addCampModalOpen}
             onClose={() => setAddCampModalOpen(false)}
-            token={token}
+            token={token || localStorage.getItem('terrarisk_token') || ''}
             editingShelter={editingShelter}
             onCampSaved={() => fetchTriageData()}
             triggerToast={triggerToast}
@@ -738,7 +872,7 @@ export default function AuthorityDashboard({
             isOpen={suppliesModalOpen}
             onClose={() => setSuppliesModalOpen(false)}
             shelter={selectedSuppliesShelter}
-            token={token}
+            token={token || localStorage.getItem('terrarisk_token') || ''}
             onSuppliesUpdated={() => fetchTriageData()}
             triggerToast={triggerToast}
           />

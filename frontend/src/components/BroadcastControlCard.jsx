@@ -1,33 +1,28 @@
-import { useState, useEffect } from 'react';
-import { Send, Radio, MessageSquare, Share2, CheckCircle, FileCode, Shield, Activity, BellRing } from 'lucide-react';
-import axios from 'axios';
+import { useState } from 'react';
+import { Send, Radio, MessageSquare, Share2, CheckCircle, FileCode } from 'lucide-react';
+import api from '../services/api';
 
 export default function BroadcastControlCard({
   riskData,
   riskPercentage,
-  isGuardActive,
   gaugeColor,
   user,
   triggerToast
 }) {
-  const [customMessage, setCustomMessage] = useState('');
   const [activePreset, setActivePreset] = useState('auto');
   const [dispatching, setDispatching] = useState(false);
   const [dispatchStatus, setDispatchStatus] = useState(null);
 
   const locationName = riskData?.geo_name || 'Kerala Sector';
 
-  useEffect(() => {
-    if (activePreset === 'auto') {
-      if (riskData?.alert_text) {
-        setCustomMessage(riskData.alert_text);
-      } else if (riskPercentage >= 70) {
-        setCustomMessage(`CRITICAL LANDSLIDE ALERT: Elevated risk (${riskPercentage.toFixed(1)}%) detected at ${locationName}. Immediate evacuation to nearest relief shelter advised.`);
-      } else {
-        setCustomMessage(`TERRARISK ADVISORY: Monitoring terrain at ${locationName}. Risk: ${riskPercentage.toFixed(1)}%.`);
-      }
-    }
-  }, [riskData, riskPercentage, activePreset, locationName]);
+  const defaultAutoMsg = riskData?.alert_text || (
+    riskPercentage >= 70
+      ? `CRITICAL LANDSLIDE ALERT: Elevated risk (${riskPercentage.toFixed(1)}%) detected at ${locationName}. Immediate evacuation to nearest relief shelter advised.`
+      : `TERRARISK ADVISORY: Monitoring terrain at ${locationName}. Risk: ${riskPercentage.toFixed(1)}%.`
+  );
+
+  const [customMessage, setCustomMessage] = useState('');
+  const activeMessage = customMessage || defaultAutoMsg;
 
   const applyPreset = (presetKey) => {
     setActivePreset(presetKey);
@@ -38,7 +33,7 @@ export default function BroadcastControlCard({
     } else if (presetKey === 'allclear') {
       setCustomMessage(`✅ ALL CLEAR: Geological stability confirmed at ${locationName}. Nominal moisture parameters restored.`);
     } else {
-      setCustomMessage(riskData?.alert_text || `TERRARISK ADVISORY: Monitoring terrain at ${locationName}. Risk: ${riskPercentage.toFixed(1)}%.`);
+      setCustomMessage('');
     }
   };
 
@@ -50,9 +45,9 @@ export default function BroadcastControlCard({
     triggerToast("Connecting to Twilio cellular SMS gateway...", "info");
 
     try {
-      const res = await axios.post('http://127.0.0.1:5000/api/broadcast', {
+      const res = await api.post('/api/broadcast', {
         phone: user?.phone || undefined,
-        alert_text: customMessage
+        alert_text: activeMessage
       });
 
       if (res.data.success) {
@@ -66,7 +61,7 @@ export default function BroadcastControlCard({
       } else {
         triggerToast(res.data.error || "Failed to dispatch SMS", "error");
       }
-    } catch (err) {
+    } catch {
       triggerToast("Error connecting to dispatch gateway.", "error");
     } finally {
       setDispatching(false);
@@ -74,13 +69,13 @@ export default function BroadcastControlCard({
   };
 
   const openWhatsAppShare = () => {
-    const text = `🚨 *TERRARISK EMERGENCY DISASTER ALERT*\n\n${customMessage}\n\n📍 *Live GIS Map*: https://maps.google.com/?q=${riskData?.lat || 11.5542},${riskData?.lng || 76.1308}\n\nIssued by Kerala State Disaster Management Cell`;
+    const text = `🚨 *TERRARISK EMERGENCY DISASTER ALERT*\n\n${activeMessage}\n\n📍 *Live GIS Map*: https://maps.google.com/?q=${riskData?.lat || 11.5542},${riskData?.lng || 76.1308}\n\nIssued by Kerala State Disaster Management Cell`;
     const url = `https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`;
     window.open(url, '_blank');
   };
 
   const openTelegramShare = () => {
-    const text = `🚨 TERRARISK EMERGENCY DISASTER BULLETIN\n\n${customMessage}\n\n📍 Sector: (${riskData?.lat || 11.5542}°N, ${riskData?.lng || 76.1308}°E)\n\nIssued by Kerala State Disaster Management Cell`;
+    const text = `🚨 TERRARISK EMERGENCY DISASTER BULLETIN\n\n${activeMessage}\n\n📍 Sector: (${riskData?.lat || 11.5542}°N, ${riskData?.lng || 76.1308}°E)\n\nIssued by Kerala State Disaster Management Cell`;
     const url = `https://t.me/share/url?url=https://terrarisk.kerala.gov.in&text=${encodeURIComponent(text)}`;
     window.open(url, '_blank');
   };
@@ -140,14 +135,14 @@ export default function BroadcastControlCard({
         <textarea
           rows={3}
           className="broadcast-textarea"
-          value={customMessage}
+          value={activeMessage}
           onChange={(e) => {
             setCustomMessage(e.target.value);
             setActivePreset('custom');
           }}
         />
         <div className="broadcast-char-count">
-          <span>{customMessage.length} characters</span>
+          <span>{activeMessage.length} characters</span>
           <span>Cellular Carrier Compliant</span>
         </div>
       </div>
@@ -196,7 +191,7 @@ export default function BroadcastControlCard({
         </button>
 
         <a
-          href="http://127.0.0.1:5000/api/alerts/cap.json"
+          href="/api/alerts/cap.json"
           target="_blank"
           rel="noopener noreferrer"
           className="btn-channel-pill cap"

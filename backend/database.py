@@ -13,8 +13,9 @@ import json
 import sqlite3
 import hashlib
 import secrets
-from datetime import datetime
-from typing import List, Dict, Any, Optional
+from datetime import datetime, timedelta
+import re
+from typing import List, Dict, Any, Optional, Tuple
 
 # Force UTF-8 encoding on Windows console streams if available
 if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
@@ -122,13 +123,18 @@ def init_db(db_path: Optional[str] = None) -> None:
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
-                phone TEXT UNIQUE NOT NULL,
+                phone TEXT UNIQUE,
+                email TEXT UNIQUE,
                 password_hash TEXT NOT NULL,
                 lat REAL,
                 lng REAL,
                 district TEXT,
                 role TEXT NOT NULL DEFAULT 'Citizen' CHECK(role IN ('Citizen', 'Volunteer', 'Authority_Admin')),
-                credibility_score INTEGER NOT NULL DEFAULT 50 CHECK(credibility_score >= 0 AND credibility_score <= 100),
+                is_verified INTEGER NOT NULL DEFAULT 0,
+                is_email_verified INTEGER NOT NULL DEFAULT 0,
+                email_otp TEXT,
+                email_otp_expires_at TIMESTAMP,
+                credibility_score INTEGER NOT NULL DEFAULT 100,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
@@ -144,7 +150,7 @@ def init_db(db_path: Optional[str] = None) -> None:
                 description TEXT,
                 image_url TEXT,
                 severity INTEGER NOT NULL DEFAULT 3 CHECK(severity >= 1 AND severity <= 5),
-                status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'verified', 'rejected')),
+                status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'verified', 'rejected', 'resolved', 'cleared')),
                 cluster_id TEXT,
                 verified_by INTEGER,
                 ai_confidence REAL,
@@ -160,6 +166,41 @@ def init_db(db_path: Optional[str] = None) -> None:
         """)
         
         # Migrations for incident_reports
+        cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='incident_reports';")
+        master_row = cursor.fetchone()
+        if master_row and "resolved" not in master_row["sql"]:
+            cursor.execute("ALTER TABLE incident_reports RENAME TO incident_reports_old;")
+            cursor.execute("""
+                CREATE TABLE incident_reports (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    hazard_type TEXT NOT NULL,
+                    lat REAL NOT NULL,
+                    lng REAL NOT NULL,
+                    description TEXT,
+                    image_url TEXT,
+                    severity INTEGER NOT NULL DEFAULT 3 CHECK(severity >= 1 AND severity <= 5),
+                    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'verified', 'rejected', 'resolved', 'cleared')),
+                    cluster_id TEXT,
+                    verified_by INTEGER,
+                    ai_confidence REAL,
+                    ai_hazard_type TEXT,
+                    ai_severity INTEGER,
+                    ai_summary TEXT,
+                    is_flagged_spam INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+                    FOREIGN KEY (verified_by) REFERENCES users(id) ON DELETE SET NULL
+                );
+            """)
+            cursor.execute("""
+                INSERT INTO incident_reports (id, user_id, hazard_type, lat, lng, description, image_url, severity, status, cluster_id, verified_by, ai_confidence, ai_hazard_type, ai_severity, ai_summary, is_flagged_spam, created_at, updated_at)
+                SELECT id, user_id, hazard_type, lat, lng, description, image_url, severity, status, cluster_id, verified_by, ai_confidence, ai_hazard_type, ai_severity, ai_summary, is_flagged_spam, created_at, updated_at
+                FROM incident_reports_old;
+            """)
+            cursor.execute("DROP TABLE incident_reports_old;")
+
         cursor.execute("PRAGMA table_info(incident_reports);")
         inc_cols = [col["name"] for col in cursor.fetchall()]
         if "severity" not in inc_cols:
@@ -280,7 +321,26 @@ def init_db(db_path: Optional[str] = None) -> None:
             );
         """)
         
-        # 8. Indexes for fast geospatial and operational queries
+        # 8. Emergency Broadcasts Table (Persistent Alert History)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS emergency_broadcasts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                broadcast_id TEXT UNIQUE NOT NULL,
+                hazard_type TEXT NOT NULL,
+                lat REAL NOT NULL,
+                lng REAL NOT NULL,
+                radius_km REAL NOT NULL,
+                alert_en TEXT NOT NULL,
+                alert_ml TEXT NOT NULL,
+                recipients_count INTEGER DEFAULT 0,
+                sender TEXT,
+                telegram_link TEXT,
+                whatsapp_link TEXT,
+                sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        # 9. Indexes for fast geospatial, operational, and alert queries
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_phone ON users(phone);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_incident_reports_status ON incident_reports(status);")
@@ -293,6 +353,31 @@ def init_db(db_path: Optional[str] = None) -> None:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_family_safety_user ON family_safety_contacts(user_id);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_volunteer_missions_status ON volunteer_missions(status);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_emergency_broadcasts_sent_at ON emergency_broadcasts(sent_at);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_emergency_broadcasts_bcast_id ON emergency_broadcasts(broadcast_id);")
+        
+        # Schema Migration: Ensure is_verified and email columns exist
+        cursor.execute("PRAGMA table_info(users);")
+        user_cols = [row[1] for row in cursor.fetchall()]
+        if "is_verified" not in user_cols:
+            cursor.execute("ALTER TABLE users ADD COLUMN is_verified INTEGER NOT NULL DEFAULT 0;")
+        if "email" not in user_cols:
+            cursor.execute("ALTER TABLE users ADD COLUMN email TEXT;")
+        if "is_email_verified" not in user_cols:
+            cursor.execute("ALTER TABLE users ADD COLUMN is_email_verified INTEGER NOT NULL DEFAULT 0;")
+        if "email_otp" not in user_cols:
+            cursor.execute("ALTER TABLE users ADD COLUMN email_otp TEXT;")
+        if "email_otp_expires_at" not in user_cols:
+            cursor.execute("ALTER TABLE users ADD COLUMN email_otp_expires_at TIMESTAMP;")
+
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL;")
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone ON users(phone) WHERE phone IS NOT NULL;")
+            
+        # Authority Admins and NDRF Volunteers are verified officials by default
+        cursor.execute("UPDATE users SET is_verified = 1 WHERE role IN ('Authority_Admin', 'Volunteer');")
+        
+        # Clear any legacy static home coordinates so only live location is utilized
+        cursor.execute("UPDATE users SET lat = NULL, lng = NULL, district = NULL;")
         
         conn.commit()
         seed_initial_data(conn, db_path=target_path)
@@ -311,23 +396,27 @@ def seed_initial_data(conn: Optional[sqlite3.Connection] = None, db_path: Option
     try:
         cursor = conn.cursor()
         
-        # 1. Seed Default Authority Admin
-        admin_phone = "+919999900000"
-        admin_hash = hash_password("Admin@Terra2026!")
-        cursor.execute("SELECT id FROM users WHERE phone = ? LIMIT 1;", (admin_phone,))
+        # 1. Seed Default Authority Admin (Abhinav)
+        admin_phone = "+916282115954"
+        admin_email = "admin@terrarisk.gov.in"
+        admin_hash = hash_password("A12345678")
+        cursor.execute("SELECT id FROM users WHERE phone = ? OR email = ? LIMIT 1;", (admin_phone, admin_email))
         admin_row = cursor.fetchone()
         if not admin_row:
             cursor.execute("""
-                INSERT INTO users (name, phone, password_hash, lat, lng, district, role, credibility_score)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+                INSERT INTO users (name, phone, email, password_hash, lat, lng, district, role, is_verified, is_email_verified, credibility_score)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
             """, (
-                "Kerala State Disaster Management Authority (KSDMA)",
+                "Abhinav (KSDMA Authority Admin)",
                 admin_phone,
+                admin_email,
                 admin_hash,
-                11.5361,
-                76.1667,
-                "Wayanad",
+                None,
+                None,
+                None,
                 "Authority_Admin",
+                1,
+                1,
                 100
             ))
             admin_id = cursor.lastrowid
@@ -339,41 +428,103 @@ def seed_initial_data(conn: Optional[sqlite3.Connection] = None, db_path: Option
                 "SYSTEM_INIT_SEED_ADMIN",
                 admin_id,
                 admin_id,
-                "Default Authority Admin created during system initialization."
+                "Default Authority Admin (Abhinav) initialized."
             ))
-            print(f"[OK] Initialized default Authority Admin (ID: {admin_id})")
+            print(f"[OK] Initialized default Authority Admin (Abhinav, ID: {admin_id})")
         else:
             cursor.execute("""
-                UPDATE users SET role = 'Authority_Admin', credibility_score = 100, password_hash = ?
-                WHERE phone = ?;
-            """, (admin_hash, admin_phone))
+                UPDATE users SET name = 'Abhinav (KSDMA Authority Admin)', email = ?, role = 'Authority_Admin', is_verified = 1, is_email_verified = 1, credibility_score = 100, password_hash = ?, lat = NULL, lng = NULL, district = NULL
+                WHERE phone = ? OR email = ?;
+            """, (admin_email, admin_hash, admin_phone, admin_email))
+
+        # 1b. Seed Authority Incident Commander (Used by automated drills)
+        cmd_phone = "+919999900000"
+        cmd_email = "commander@terrarisk.gov.in"
+        cmd_hash = hash_password("Admin@Terra2026!")
+        cursor.execute("SELECT id FROM users WHERE phone = ? OR email = ? LIMIT 1;", (cmd_phone, cmd_email))
+        cmd_row = cursor.fetchone()
+        if not cmd_row:
+            cursor.execute("""
+                INSERT INTO users (name, phone, email, password_hash, lat, lng, district, role, is_verified, is_email_verified, credibility_score)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            """, (
+                "KSDMA Incident Commander",
+                cmd_phone,
+                cmd_email,
+                cmd_hash,
+                None,
+                None,
+                None,
+                "Authority_Admin",
+                1,
+                1,
+                100
+            ))
+        else:
+            cursor.execute("""
+                UPDATE users SET name = 'KSDMA Incident Commander', email = ?, role = 'Authority_Admin', is_verified = 1, is_email_verified = 1, password_hash = ?
+                WHERE phone = ? OR email = ?;
+            """, (cmd_email, cmd_hash, cmd_phone, cmd_email))
 
         # 2. Seed Default Field Volunteer
         vol_phone = "+919888800000"
+        vol_email = "volunteer@terrarisk.org"
         vol_hash = hash_password("Volunteer@2026!")
-        cursor.execute("SELECT id FROM users WHERE phone = ? LIMIT 1;", (vol_phone,))
+        cursor.execute("SELECT id FROM users WHERE phone = ? OR email = ? LIMIT 1;", (vol_phone, vol_email))
         vol_row = cursor.fetchone()
         if not vol_row:
             cursor.execute("""
-                INSERT INTO users (name, phone, password_hash, lat, lng, district, role, credibility_score)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+                INSERT INTO users (name, phone, email, password_hash, lat, lng, district, role, is_verified, is_email_verified, credibility_score)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
             """, (
                 "Anandhu Nair (NDRF Volunteer)",
                 vol_phone,
+                vol_email,
                 vol_hash,
-                11.5542,
-                76.1308,
-                "Wayanad",
+                None,
+                None,
+                None,
                 "Volunteer",
-                85
+                1,
+                1,
+                100
             ))
         else:
             cursor.execute("""
-                UPDATE users SET role = 'Volunteer', password_hash = ?
-                WHERE phone = ?;
-            """, (vol_hash, vol_phone))
+                UPDATE users SET role = 'Volunteer', email = ?, is_verified = 1, is_email_verified = 1, password_hash = ?, lat = NULL, lng = NULL, district = NULL
+                WHERE phone = ? OR email = ?;
+            """, (vol_email, vol_hash, vol_phone, vol_email))
 
-        # 3. Seed Sample Kerala Relief Shelters (At least 10 shelters across Wayanad, Idukki, Malappuram, Kozhikode)
+        # 3. Seed Default Sample Citizen (For quick evaluator logins)
+        cit_phone = "+919847012345"
+        cit_email = "citizen@terrarisk.org"
+        cit_hash = hash_password("SecurePassword123!")
+        cursor.execute("SELECT id FROM users WHERE phone = ? OR email = ? LIMIT 1;", (cit_phone, cit_email))
+        cit_row = cursor.fetchone()
+        if not cit_row:
+            cursor.execute("""
+                INSERT INTO users (name, phone, email, password_hash, lat, lng, district, role, is_verified, is_email_verified, credibility_score)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            """, (
+                "Abhinav R (Citizen)",
+                cit_phone,
+                cit_email,
+                cit_hash,
+                None,
+                None,
+                None,
+                "Citizen",
+                1,
+                1,
+                100
+            ))
+        else:
+            cursor.execute("""
+                UPDATE users SET email = ?, is_email_verified = 1, password_hash = ?, lat = NULL, lng = NULL, district = NULL
+                WHERE phone = ? OR email = ?;
+            """, (cit_email, cit_hash, cit_phone, cit_email))
+
+        # 4. Seed Sample Kerala Relief Shelters (At least 10 shelters across Wayanad, Idukki, Malappuram, Kozhikode)
         cursor.execute("SELECT COUNT(*) AS count FROM relief_shelters;")
         if cursor.fetchone()["count"] < 10:
             sample_shelters = [
@@ -483,6 +634,36 @@ def get_user_by_phone(phone: str, db_path: Optional[str] = None) -> Optional[Dic
         conn.close()
 
 
+def get_user_by_email(email: str, db_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    clean_email = email.strip().lower()
+    conn = get_db_connection(db_path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM users WHERE LOWER(email) = ? LIMIT 1;", (clean_email,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def get_user_by_identifier(identifier: str, db_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Look up user by either email address or phone number."""
+    ident = identifier.strip()
+    if "@" in ident:
+        return get_user_by_email(ident, db_path=db_path)
+
+    # Phone normalization for search
+    digits = re.sub(r"[\s\-]", "", ident)
+    if digits.startswith("+91"):
+        core = digits[3:]
+    elif digits.startswith("91") and len(digits) == 12:
+        core = digits[2:]
+    else:
+        core = digits.lstrip("+")
+    normalized = "+91" + core if re.match(r"^[6-9]\d{9}$", core) else ident
+    return get_user_by_phone(normalized, db_path=db_path)
+
+
 def get_user_by_id(user_id: int, include_password: bool = False, db_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
     conn = get_db_connection(db_path)
     try:
@@ -494,6 +675,7 @@ def get_user_by_id(user_id: int, include_password: bool = False, db_path: Option
         u_dict = dict(row)
         if not include_password:
             u_dict.pop("password_hash", None)
+            u_dict.pop("email_otp", None)
         return u_dict
     finally:
         conn.close()
@@ -501,34 +683,182 @@ def get_user_by_id(user_id: int, include_password: bool = False, db_path: Option
 
 def create_user(
     name: str,
-    phone: str,
-    password_hash: str,
+    phone: Optional[str] = None,
+    password_hash: str = "",
+    email: Optional[str] = None,
     lat: Optional[float] = None,
     lng: Optional[float] = None,
     district: Optional[str] = None,
     role: str = "Citizen",
-    credibility_score: int = 50,
+    is_verified: int = 0,
+    is_email_verified: int = 0,
+    email_otp: Optional[str] = None,
+    email_otp_expires_at: Optional[str] = None,
+    credibility_score: int = 100,
     db_path: Optional[str] = None
 ) -> int:
     valid_roles = ("Citizen", "Volunteer", "Authority_Admin")
     if role not in valid_roles:
         role = "Citizen"
-    credibility_score = max(0, min(100, credibility_score))
-    
+    if role in ("Authority_Admin", "Volunteer"):
+        is_verified = 1
+        is_email_verified = 1
+        
+    clean_phone = phone.strip() if phone else None
+    clean_email = email.strip().lower() if email else None
+    if email_otp and not email_otp_expires_at:
+        email_otp_expires_at = (datetime.utcnow() + timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
     conn = get_db_connection(db_path)
     try:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO users (name, phone, password_hash, lat, lng, district, role, credibility_score)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?);
-        """, (name.strip(), phone.strip(), password_hash, lat, lng, district, role, credibility_score))
+            INSERT INTO users (
+                name, phone, email, password_hash, lat, lng, district,
+                role, is_verified, is_email_verified, email_otp, email_otp_expires_at, credibility_score
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        """, (
+            name.strip(), clean_phone, clean_email, password_hash,
+            lat, lng, district, role, is_verified, is_email_verified,
+            email_otp, email_otp_expires_at, credibility_score
+        ))
         conn.commit()
         return cursor.lastrowid
     finally:
         conn.close()
 
 
+def update_unverified_user(
+    user_id: int,
+    name: str,
+    phone: Optional[str] = None,
+    password_hash: str = "",
+    lat: Optional[float] = None,
+    lng: Optional[float] = None,
+    district: Optional[str] = None,
+    role: str = "Citizen",
+    email_otp: Optional[str] = None,
+    email_otp_expires_at: Optional[str] = None,
+    db_path: Optional[str] = None
+) -> bool:
+    """Update details and refresh OTP for an existing unverified user registration."""
+    clean_phone = phone.strip() if phone else None
+    if email_otp and not email_otp_expires_at:
+        email_otp_expires_at = (datetime.utcnow() + timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
+    conn = get_db_connection(db_path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE users
+            SET name = ?, phone = ?, password_hash = ?, lat = ?, lng = ?, district = ?,
+                role = ?, email_otp = ?, email_otp_expires_at = ?
+            WHERE id = ? AND is_email_verified = 0 AND is_verified = 0;
+        """, (
+            name.strip(), clean_phone, password_hash, lat, lng, district,
+            role, email_otp, email_otp_expires_at, user_id
+        ))
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+def delete_unverified_user(user_id: int, db_path: Optional[str] = None) -> bool:
+    """Safely delete an unverified pending registration."""
+    conn = get_db_connection(db_path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM users WHERE id = ? AND is_email_verified = 0 AND is_verified = 0;", (user_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+def set_email_otp(
+    user_id: int,
+    otp: str,
+    expires_in_minutes: int = 10,
+    db_path: Optional[str] = None
+) -> bool:
+    """Store or refresh 6-digit email OTP for a user with expiration."""
+    conn = get_db_connection(db_path)
+    try:
+        cursor = conn.cursor()
+        expires_at = (datetime.utcnow() + timedelta(minutes=expires_in_minutes)).strftime("%Y-%m-%d %H:%M:%S")
+        cursor.execute("""
+            UPDATE users
+            SET email_otp = ?, email_otp_expires_at = ?
+            WHERE id = ?;
+        """, (otp.strip(), expires_at, user_id))
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+def verify_email_otp(
+    email: str,
+    code: str,
+    db_path: Optional[str] = None
+) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
+    """Verify submitted 6-digit OTP against active token in database."""
+    clean_email = email.strip().lower()
+    conn = get_db_connection(db_path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM users WHERE LOWER(email) = ? LIMIT 1;", (clean_email,))
+        row = cursor.fetchone()
+        if not row:
+            return False, "No profile found associated with this email address.", None
+        user = dict(row)
+
+        if user.get("is_email_verified"):
+            return True, "Email is already verified.", get_user_by_id(user["id"], db_path=db_path)
+
+        saved_otp = user.get("email_otp")
+        expires_at_str = user.get("email_otp_expires_at")
+
+        if not saved_otp or not expires_at_str:
+            return False, "No active verification code found. Please request a new code.", None
+
+        if str(code).strip() != str(saved_otp).strip():
+            return False, "Invalid verification code. Please check your email and try again.", None
+
+        try:
+            expires_at = datetime.strptime(expires_at_str, "%Y-%m-%d %H:%M:%S")
+            if datetime.utcnow() > expires_at:
+                return False, "Verification code has expired. Please request a new code.", None
+        except Exception:
+            pass
+
+        cursor.execute("""
+            UPDATE users
+            SET is_email_verified = 1, email_otp = NULL, email_otp_expires_at = NULL
+            WHERE id = ?;
+        """, (user["id"],))
+        conn.commit()
+
+        verified_user = get_user_by_id(user["id"], db_path=db_path)
+        return True, "Email address verified successfully.", verified_user
+    finally:
+        conn.close()
+
+
+def set_user_verification(user_id: int, is_verified: bool = True, db_path: Optional[str] = None) -> bool:
+    """Directly verify or revoke verification for a user by Authority Admin."""
+    conn = get_db_connection(db_path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE users SET is_verified = ? WHERE id = ?;", (1 if is_verified else 0, user_id))
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
 def update_user_credibility(user_id: int, new_score: int, db_path: Optional[str] = None) -> bool:
+    """Legacy compatibility helper."""
     clamped_score = max(0, min(100, new_score))
     conn = get_db_connection(db_path)
     try:
@@ -866,7 +1196,7 @@ def find_nearby_pending_cluster(
         cursor.execute("""
             SELECT id, lat, lng, cluster_id, created_at
             FROM incident_reports
-            WHERE status = 'pending'
+            WHERE status IN ('pending', 'verified')
               AND datetime(created_at) >= datetime('now', '-' || ? || ' hours');
         """, (str(hours_window),))
         rows = cursor.fetchall()
@@ -882,6 +1212,62 @@ def find_nearby_pending_cluster(
                     conn.commit()
                     return new_cluster_id
         return None
+    finally:
+        conn.close()
+
+
+def check_and_autoverify_cluster(
+    cluster_id: str,
+    threshold: int = 5,
+    db_path: Optional[str] = None
+) -> Tuple[bool, int]:
+    """
+    Auto-verify an incident cluster if >= threshold reports (or distinct reporters)
+    have reported an incident in the same 500m area cluster.
+    Returns (is_verified, report_count).
+    """
+    conn = get_db_connection(db_path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, user_id, status FROM incident_reports
+            WHERE cluster_id = ? AND status IN ('pending', 'verified');
+        """, (cluster_id,))
+        rows = cursor.fetchall()
+        if not rows:
+            return False, 0
+
+        total_reports = len(rows)
+        unique_users = {r["user_id"] for r in rows if r["user_id"] is not None}
+        distinct_count = max(len(unique_users), total_reports)
+
+        if distinct_count >= threshold:
+            pending_ids = [r["id"] for r in rows if r["status"] == 'pending']
+            if pending_ids:
+                cursor.execute(f"""
+                    UPDATE incident_reports
+                    SET status = 'verified', verified_by = NULL, updated_at = CURRENT_TIMESTAMP
+                    WHERE id IN ({','.join(['?'] * len(pending_ids))});
+                """, pending_ids)
+
+                user_ids_to_verify = list(unique_users)
+                if user_ids_to_verify:
+                    cursor.execute(f"""
+                        UPDATE users SET is_verified = 1
+                        WHERE id IN ({','.join(['?'] * len(user_ids_to_verify))});
+                    """, user_ids_to_verify)
+
+                cursor.execute("""
+                    INSERT INTO audit_logs (action, actor_id, target_id, details)
+                    VALUES (?, NULL, ?, ?);
+                """, (
+                    "INCIDENT_CLUSTER_AUTOVERIFIED",
+                    pending_ids[0],
+                    f"Cluster {cluster_id} automatically verified after reaching crowd consensus threshold ({distinct_count} reports >= {threshold})."
+                ))
+                conn.commit()
+            return True, distinct_count
+        return False, distinct_count
     finally:
         conn.close()
 
@@ -945,7 +1331,7 @@ def get_nearby_incidents(
                    r.image_url, r.severity, r.status, r.cluster_id, r.verified_by,
                    r.ai_confidence, r.ai_hazard_type, r.ai_severity, r.ai_summary, r.is_flagged_spam,
                    r.created_at, r.updated_at,
-                   u.name AS reporter_name, u.credibility_score AS reporter_credibility
+                   u.name AS reporter_name, u.is_verified AS reporter_is_verified
             FROM incident_reports r
             LEFT JOIN users u ON r.user_id = u.id
             WHERE 1=1
@@ -979,7 +1365,7 @@ def get_active_incident_clusters(db_path: Optional[str] = None) -> List[Dict[str
                    r.image_url, r.severity, r.status, r.cluster_id, r.verified_by,
                    r.ai_confidence, r.ai_hazard_type, r.ai_severity, r.ai_summary, r.is_flagged_spam,
                    r.created_at, r.updated_at,
-                   u.name AS reporter_name, u.role AS reporter_role, u.credibility_score AS reporter_credibility
+                   u.name AS reporter_name, u.role AS reporter_role, u.is_verified AS reporter_is_verified
             FROM incident_reports r
             LEFT JOIN users u ON r.user_id = u.id
             WHERE r.status IN ('pending', 'verified')
@@ -1013,6 +1399,8 @@ def get_active_incident_clusters(db_path: Optional[str] = None) -> List[Dict[str
                 clusters_map[c_id]["max_ai_confidence"] = r["ai_confidence"]
             if r["status"] == "verified":
                 clusters_map[c_id]["has_verified"] = True
+                if r.get("verified_by") is None:
+                    clusters_map[c_id]["is_auto_verified"] = True
                 
         cluster_results = []
         for c_id, c in clusters_map.items():
@@ -1035,6 +1423,7 @@ def get_active_incident_clusters(db_path: Optional[str] = None) -> List[Dict[str
                 "max_severity": max_sev,
                 "max_ai_confidence": round(c["max_ai_confidence"], 2),
                 "status": "verified" if c["has_verified"] else "pending",
+                "is_auto_verified": c.get("is_auto_verified", False) or (c["has_verified"] and rep_count >= 5),
                 "description": latest_report["description"] or f"Cluster of {rep_count} {primary_hazard.replace('_', ' ')} reports",
                 "created_at": c["latest_created_at"],
                 "reports": c["reports"]
@@ -1051,19 +1440,26 @@ def get_active_incident_clusters(db_path: Optional[str] = None) -> List[Dict[str
         conn.close()
 
 
-def get_pending_incident_clusters(db_path: Optional[str] = None) -> List[Dict[str, Any]]:
+def get_pending_incident_clusters(db_path: Optional[str] = None, status_filter: str = "all") -> List[Dict[str, Any]]:
     conn = get_db_connection(db_path)
     try:
         cursor = conn.cursor()
-        query = """
+        if status_filter == "pending":
+            status_clause = "r.status = 'pending'"
+        elif status_filter == "verified":
+            status_clause = "r.status = 'verified'"
+        else:
+            status_clause = "r.status IN ('pending', 'verified')"
+            
+        query = f"""
             SELECT r.id, r.user_id, r.hazard_type, r.lat, r.lng, r.description,
-                   r.image_url, r.severity, r.status, r.cluster_id, r.created_at,
+                   r.image_url, r.severity, r.status, r.cluster_id, r.verified_by, r.created_at,
                    r.ai_confidence, r.ai_hazard_type, r.ai_severity, r.ai_summary, r.is_flagged_spam,
                    u.name AS reporter_name, u.phone AS reporter_phone,
-                   u.role AS reporter_role, u.credibility_score AS reporter_credibility
+                   u.role AS reporter_role, u.is_verified AS reporter_is_verified
             FROM incident_reports r
             LEFT JOIN users u ON r.user_id = u.id
-            WHERE r.status = 'pending'
+            WHERE {status_clause}
             ORDER BY r.created_at DESC;
         """
         cursor.execute(query)
@@ -1079,18 +1475,17 @@ def get_pending_incident_clusters(db_path: Optional[str] = None) -> List[Dict[st
                     "reports": [],
                     "hazard_types": [],
                     "severities": [],
-                    "credibilities": [],
                     "lats": [],
                     "lngs": [],
                     "max_ai_confidence": 0.0,
                     "ai_summaries": [],
                     "has_spam_flag": False,
+                    "has_verified": False,
                     "latest_created_at": r["created_at"]
                 }
             clusters_map[c_id]["reports"].append(r)
             clusters_map[c_id]["hazard_types"].append(r["hazard_type"])
             clusters_map[c_id]["severities"].append(r["severity"] if r["severity"] is not None else 3)
-            clusters_map[c_id]["credibilities"].append(r["reporter_credibility"] if r["reporter_credibility"] is not None else 50)
             clusters_map[c_id]["lats"].append(r["lat"])
             clusters_map[c_id]["lngs"].append(r["lng"])
             if r.get("ai_confidence") and r["ai_confidence"] > clusters_map[c_id]["max_ai_confidence"]:
@@ -1099,6 +1494,8 @@ def get_pending_incident_clusters(db_path: Optional[str] = None) -> List[Dict[st
                 clusters_map[c_id]["ai_summaries"].append(r["ai_summary"])
             if r.get("is_flagged_spam"):
                 clusters_map[c_id]["has_spam_flag"] = True
+            if r.get("status") == "verified":
+                clusters_map[c_id]["has_verified"] = True
                 
         pending_results = []
         for c_id, c in clusters_map.items():
@@ -1107,9 +1504,10 @@ def get_pending_incident_clusters(db_path: Optional[str] = None) -> List[Dict[st
             avg_lng = sum(c["lngs"]) / rep_count
             avg_sev = sum(c["severities"]) / rep_count
             max_sev = max(c["severities"])
-            avg_cred = sum(c["credibilities"]) / rep_count
+            verified_rep_count = sum(1 for r in c["reports"] if r.get("reporter_is_verified"))
             primary_hazard = max(set(c["hazard_types"]), key=c["hazard_types"].count)
-            priority_score = round((rep_count * 15.0) + (avg_sev * 12.0) + (avg_cred * 0.25) + (c["max_ai_confidence"] * 20.0), 1)
+            is_verified = c["has_verified"]
+            priority_score = round((rep_count * 15.0) + (avg_sev * 12.0) + (verified_rep_count * 10.0) + (c["max_ai_confidence"] * 20.0) + (10.0 if is_verified else 0.0), 1)
             
             latest_report = c["reports"][0]
             ai_summary_text = c["ai_summaries"][0] if c["ai_summaries"] else ("High visual hazard indicator" if c["max_ai_confidence"] >= 0.7 else "Standard field report")
@@ -1122,17 +1520,18 @@ def get_pending_incident_clusters(db_path: Optional[str] = None) -> List[Dict[st
                 "report_count": rep_count,
                 "avg_severity": round(avg_sev, 1),
                 "max_severity": max_sev,
-                "avg_reporter_credibility": round(avg_cred, 1),
+                "verified_reporters_count": verified_rep_count,
                 "priority_score": priority_score,
                 "max_ai_confidence": round(c["max_ai_confidence"], 2),
                 "ai_summary": ai_summary_text,
                 "has_spam_flag": c["has_spam_flag"],
+                "status": "verified" if is_verified else "pending",
                 "description": latest_report["description"] or f"{primary_hazard.replace('_', ' ').title()} near sector ({avg_lat:.3f}N, {avg_lng:.3f}E)",
                 "created_at": c["latest_created_at"],
                 "reports": c["reports"]
             })
             
-        pending_results.sort(key=lambda x: x["priority_score"], reverse=True)
+        pending_results.sort(key=lambda x: (1 if x["status"] == "pending" else 0, x["priority_score"]), reverse=True)
         return pending_results
     finally:
         conn.close()
@@ -1168,25 +1567,12 @@ def verify_incident_cluster(
             WHERE id IN ({','.join(['?'] * len(report_ids))});
         """, [verified_by_user_id] + report_ids)
         
-        rewarded_users = []
-        for uid in unique_user_ids:
-            cursor.execute("SELECT credibility_score, role, name FROM users WHERE id = ?;", (uid,))
-            user_row = cursor.fetchone()
-            if user_row:
-                old_score = user_row["credibility_score"]
-                new_score = min(100, old_score + 10)
-                cursor.execute("UPDATE users SET credibility_score = ? WHERE id = ?;", (new_score, uid))
-                
-                cursor.execute("""
-                    INSERT INTO audit_logs (action, actor_id, target_id, details)
-                    VALUES (?, ?, ?, ?);
-                """, (
-                    "CREDIBILITY_REWARDED",
-                    verified_by_user_id,
-                    uid,
-                    f"+10 credibility reward ({old_score} -> {new_score}) for verified report in cluster {cluster_id}"
-                ))
-                rewarded_users.append({"user_id": uid, "name": user_row["name"], "old_score": old_score, "new_score": new_score})
+        # Admin verification also verifies reporting citizens
+        if unique_user_ids:
+            cursor.execute(f"""
+                UPDATE users SET is_verified = 1
+                WHERE id IN ({','.join(['?'] * len(unique_user_ids))});
+            """, unique_user_ids)
                 
         cursor.execute("""
             INSERT INTO audit_logs (action, actor_id, target_id, details)
@@ -1200,10 +1586,10 @@ def verify_incident_cluster(
         conn.commit()
         return {
             "success": True,
-            "message": f"Cluster {cluster_id} verified. {len(rewarded_users)} citizens rewarded.",
+            "message": f"Cluster {cluster_id} verified by Authority Admin.",
             "cluster_id": cluster_id,
             "verified_reports_count": len(report_ids),
-            "rewarded_citizens": rewarded_users
+            "verified_citizens_count": len(unique_user_ids)
         }
     finally:
         conn.close()
@@ -1212,7 +1598,7 @@ def verify_incident_cluster(
 def reject_incident_cluster(
     cluster_id: str,
     rejected_by_user_id: int,
-    reason: str = "False Alarm / Spam",
+    reason: str = "False Alarm / Duplicate",
     db_path: Optional[str] = None
 ) -> Dict[str, Any]:
     conn = get_db_connection(db_path)
@@ -1232,7 +1618,6 @@ def reject_incident_cluster(
             return {"success": False, "error": "Incident cluster not found."}
             
         report_ids = [r["id"] for r in reports]
-        unique_user_ids = list({r["user_id"] for r in reports if r["user_id"] is not None})
         
         cursor.execute(f"""
             UPDATE incident_reports
@@ -1240,26 +1625,6 @@ def reject_incident_cluster(
             WHERE id IN ({','.join(['?'] * len(report_ids))});
         """, [rejected_by_user_id] + report_ids)
         
-        penalized_users = []
-        for uid in unique_user_ids:
-            cursor.execute("SELECT credibility_score, role, name FROM users WHERE id = ?;", (uid,))
-            user_row = cursor.fetchone()
-            if user_row:
-                old_score = user_row["credibility_score"]
-                new_score = max(0, old_score - 25)
-                cursor.execute("UPDATE users SET credibility_score = ? WHERE id = ?;", (new_score, uid))
-                
-                cursor.execute("""
-                    INSERT INTO audit_logs (action, actor_id, target_id, details)
-                    VALUES (?, ?, ?, ?);
-                """, (
-                    "CREDIBILITY_PENALIZED",
-                    rejected_by_user_id,
-                    uid,
-                    f"-25 credibility penalty ({old_score} -> {new_score}) for rejected report (Reason: {reason}) in cluster {cluster_id}"
-                ))
-                penalized_users.append({"user_id": uid, "name": user_row["name"], "old_score": old_score, "new_score": new_score})
-                
         cursor.execute("""
             INSERT INTO audit_logs (action, actor_id, target_id, details)
             VALUES (?, ?, ?, ?);
@@ -1267,19 +1632,72 @@ def reject_incident_cluster(
             "INCIDENT_CLUSTER_REJECTED",
             rejected_by_user_id,
             report_ids[0],
-            f"Cluster {cluster_id} rejected. Reason: {reason}. {len(penalized_users)} citizens penalized."
+            f"Cluster {cluster_id} marked as rejected (Reason: {reason})."
         ))
         conn.commit()
         return {
             "success": True,
-            "message": f"Cluster {cluster_id} rejected as '{reason}'. {len(penalized_users)} citizens penalized.",
+            "message": f"Cluster {cluster_id} rejected ({reason}).",
             "cluster_id": cluster_id,
             "rejected_reports_count": len(report_ids),
-            "penalized_citizens": penalized_users,
             "reason": reason
         }
     finally:
         conn.close()
+
+
+def resolve_incident_cluster(
+    cluster_id: str,
+    resolved_by_user_id: int,
+    notes: str = "Site Cleared / Hazard Mitigated",
+    db_path: Optional[str] = None
+) -> Dict[str, Any]:
+    """Mark an active or verified incident cluster as resolved/cleared once the disaster site is safe."""
+    conn = get_db_connection(db_path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, user_id, hazard_type, severity, status
+            FROM incident_reports
+            WHERE (cluster_id = ? OR id = ?) AND status IN ('pending', 'verified');
+        """, (cluster_id, cluster_id))
+        reports = cursor.fetchall()
+        
+        if not reports:
+            cursor.execute("SELECT id, status FROM incident_reports WHERE cluster_id = ? OR id = ?;", (cluster_id, cluster_id))
+            row = cursor.fetchone()
+            if row:
+                return {"success": False, "error": f"Incident is already {row['status']}."}
+            return {"success": False, "error": "Incident cluster not found."}
+            
+        report_ids = [r["id"] for r in reports]
+        
+        cursor.execute(f"""
+            UPDATE incident_reports
+            SET status = 'resolved', updated_at = CURRENT_TIMESTAMP
+            WHERE id IN ({','.join(['?'] * len(report_ids))});
+        """, report_ids)
+        
+        cursor.execute("""
+            INSERT INTO audit_logs (action, actor_id, target_id, details)
+            VALUES (?, ?, ?, ?);
+        """, (
+            "INCIDENT_CLUSTER_RESOLVED",
+            resolved_by_user_id,
+            report_ids[0],
+            f"Cluster {cluster_id} marked as RESOLVED (Site Cleared). Notes: {notes}."
+        ))
+        conn.commit()
+        return {
+            "success": True,
+            "message": f"Cluster {cluster_id} marked as resolved/cleared. Removed from active map.",
+            "cluster_id": cluster_id,
+            "resolved_reports_count": len(report_ids),
+            "notes": notes
+        }
+    finally:
+        conn.close()
+
 
 
 # ==============================================================================
@@ -1388,89 +1806,6 @@ def update_missing_person_status(
         conn.close()
 
 
-# ==============================================================================
-# FAMILY SAFETY CIRCLE & "I AM SAFE" ONE-TAP PING
-# ==============================================================================
-def get_family_contacts(user_id: int, db_path: Optional[str] = None) -> List[Dict[str, Any]]:
-    conn = get_db_connection(db_path)
-    try:
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM family_safety_contacts WHERE user_id = ? ORDER BY created_at ASC;", (user_id,))
-        return [dict(r) for r in cursor.fetchall()]
-    finally:
-        conn.close()
-
-
-def add_family_contact(
-    user_id: int,
-    contact_name: str,
-    contact_phone: str,
-    relationship: Optional[str] = None,
-    db_path: Optional[str] = None
-) -> int:
-    conn = get_db_connection(db_path)
-    try:
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO family_safety_contacts (user_id, contact_name, contact_phone, relationship)
-            VALUES (?, ?, ?, ?);
-        """, (user_id, contact_name.strip(), contact_phone.strip(), relationship or "Family"))
-        conn.commit()
-        return cursor.lastrowid
-    finally:
-        conn.close()
-
-
-def delete_family_contact(contact_id: int, user_id: int, db_path: Optional[str] = None) -> bool:
-    conn = get_db_connection(db_path)
-    try:
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM family_safety_contacts WHERE id = ? AND user_id = ?;", (contact_id, user_id))
-        conn.commit()
-        return cursor.rowcount > 0
-    finally:
-        conn.close()
-
-
-def record_family_ping(
-    user_id: int,
-    lat: float,
-    lng: float,
-    status_message: str = "Safe and Sheltered",
-    db_path: Optional[str] = None
-) -> int:
-    conn = get_db_connection(db_path)
-    try:
-        cursor = conn.cursor()
-        cursor.execute("""
-            UPDATE family_safety_contacts
-            SET last_ping_status = ?, last_ping_lat = ?, last_ping_lng = ?, last_ping_at = CURRENT_TIMESTAMP
-            WHERE user_id = ?;
-        """, (status_message, lat, lng, user_id))
-        conn.commit()
-        return cursor.rowcount
-    finally:
-        conn.close()
-
-
-def get_citizen_safety_status(phone: str, db_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
-    clean = "".join(c for c in phone if c.isdigit())
-    suffix = clean[-10:] if len(clean) >= 10 else clean
-    conn = get_db_connection(db_path)
-    try:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT u.id, u.name, u.phone, u.district, u.lat, u.lng,
-                   f.last_ping_status, f.last_ping_lat, f.last_ping_lng, f.last_ping_at
-            FROM users u
-            LEFT JOIN family_safety_contacts f ON u.id = f.user_id
-            WHERE u.phone = ? OR u.phone LIKE ?
-            ORDER BY f.last_ping_at DESC LIMIT 1;
-        """, (phone.strip(), f"%{suffix}"))
-        row = cursor.fetchone()
-        return dict(row) if row else None
-    finally:
-        conn.close()
 
 
 # ==============================================================================
@@ -1590,6 +1925,77 @@ def get_authority_metrics(db_path: Optional[str] = None) -> Dict[str, Any]:
             "total_audit_actions": audit_count,
             "synced_at": datetime.utcnow().isoformat() + "Z"
         }
+    finally:
+        conn.close()
+
+
+def save_emergency_broadcast(record: Dict[str, Any], db_path: Optional[str] = None) -> bool:
+    """Persist an emergency broadcast record into SQLite database."""
+    conn = get_db_connection(db_path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT OR REPLACE INTO emergency_broadcasts (
+                broadcast_id, hazard_type, lat, lng, radius_km,
+                alert_en, alert_ml, recipients_count, sender,
+                telegram_link, whatsapp_link, sent_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        """, (
+            record.get("broadcast_id"),
+            record.get("hazard_type", "slope_movement"),
+            float(record.get("lat", 0.0)),
+            float(record.get("lng", 0.0)),
+            float(record.get("radius_km", 5.0)),
+            record.get("alert_en", ""),
+            record.get("alert_ml", ""),
+            int(record.get("recipients_count", 0)),
+            record.get("sender", "KSDMA Emergency Command"),
+            record.get("telegram_link", ""),
+            record.get("whatsapp_link", ""),
+            record.get("sent_at") or datetime.utcnow().isoformat() + "Z"
+        ))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"[ERROR] Failed to save emergency broadcast: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def get_persisted_emergency_broadcasts(hours_window: float = 24.0, limit: int = 50, db_path: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Retrieve recent active emergency broadcasts from persistent database."""
+    conn = get_db_connection(db_path)
+    try:
+        cursor = conn.cursor()
+        cutoff = (datetime.utcnow() - timedelta(hours=hours_window)).isoformat()
+        cursor.execute("""
+            SELECT * FROM emergency_broadcasts
+            WHERE sent_at >= ?
+            ORDER BY id DESC
+            LIMIT ?;
+        """, (cutoff, limit))
+        rows = cursor.fetchall()
+        broadcasts = []
+        for r in rows:
+            broadcasts.append({
+                "broadcast_id": r["broadcast_id"],
+                "hazard_type": r["hazard_type"],
+                "lat": r["lat"],
+                "lng": r["lng"],
+                "radius_km": r["radius_km"],
+                "alert_en": r["alert_en"],
+                "alert_ml": r["alert_ml"],
+                "recipients_count": r["recipients_count"],
+                "sender": r["sender"],
+                "telegram_link": r["telegram_link"],
+                "whatsapp_link": r["whatsapp_link"],
+                "sent_at": r["sent_at"]
+            })
+        return broadcasts
+    except Exception as e:
+        print(f"[ERROR] Failed to fetch persisted broadcasts: {e}")
+        return []
     finally:
         conn.close()
 

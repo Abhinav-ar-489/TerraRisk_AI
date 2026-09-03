@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef, useMemo, Fragment } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, Fragment } from 'react';
 import { MapContainer, TileLayer, Marker, Tooltip, Circle, Polyline, useMapEvents } from 'react-leaflet';
-import { Shield, Radio, Sliders, Activity, Info, MapPin, Send, Sun, Moon, CheckCircle, AlertTriangle, CloudRain, CloudLightning, Cloud, X, Thermometer, User, LogOut, Navigation, Award, AlertOctagon, ShieldAlert, Compass, WifiOff, PhoneCall, Heart, UserX, Menu } from 'lucide-react';
-import axios from 'axios';
+import { Radio, Sliders, Activity, Info, MapPin, Sun, Moon, CheckCircle, AlertTriangle, CloudRain, CloudLightning, Cloud, X, Thermometer, User, Navigation, Compass, WifiOff, PhoneCall, Menu, RefreshCw } from 'lucide-react';
+import api from './services/api';
 import L from 'leaflet';
 import AuthModal from './components/AuthModal';
 import SafetyBanner from './components/SafetyBanner';
@@ -16,13 +16,12 @@ import TerrainSlopeLegend from './components/TerrainSlopeLegend';
 import EvacuationGuidanceCard from './components/EvacuationGuidanceCard';
 import ShelterDetailModal from './components/ShelterDetailModal';
 import ShelterOccupancyModal from './components/ShelterOccupancyModal';
-import EmergencySOSModal from './components/EmergencySOSModal';
 import EmergencyHelplinesModal from './components/EmergencyHelplinesModal';
-import FamilySafetyModal from './components/FamilySafetyModal';
 import MissingPersonsModal from './components/MissingPersonsModal';
 import SettingsLayersModal from './components/SettingsLayersModal';
 import BroadcastControlCard from './components/BroadcastControlCard';
 import LeftSidebarDrawer from './components/LeftSidebarDrawer';
+import MobileBottomNav from './components/MobileBottomNav';
 import './App.css';
 
 const KERALA_BOUNDS = [[8.1, 74.3], [12.9, 77.6]];
@@ -31,16 +30,16 @@ const KERALA_BOUNDS = [[8.1, 74.3], [12.9, 77.6]];
 const KERALA_COAST_POINTS = [
   [12.80, 74.85], [12.50, 74.98], [12.00, 75.15], [11.87, 75.35],
   [11.50, 75.60], [11.25, 75.77], [10.80, 75.92], [10.20, 76.15],
-  [9.93,  76.26], [9.50,  76.33], [9.00,  76.53], [8.88,  76.58],
-  [8.50,  76.92], [8.20,  77.08]
+  [9.93, 76.26], [9.50, 76.33], [9.00, 76.53], [8.88, 76.58],
+  [8.50, 76.92], [8.20, 77.08]
 ];
 
 // Accurate Kerala Western Ghats Crest Points (lat, ridge_lng)
 const KERALA_RIDGE_POINTS = [
   [12.80, 75.35], [12.20, 75.55], [11.80, 76.00], [11.55, 76.25],
   [11.30, 76.50], [11.00, 76.55], [10.75, 76.90], [10.40, 77.00],
-  [10.15, 77.15], [9.85,  77.20], [9.50,  77.25], [9.30,  77.18],
-  [9.00,  77.22], [8.75,  77.18], [8.40,  77.25], [8.20,  77.28]
+  [10.15, 77.15], [9.85, 77.20], [9.50, 77.25], [9.30, 77.18],
+  [9.00, 77.22], [8.75, 77.18], [8.40, 77.25], [8.20, 77.28]
 ];
 
 function interpolatePolylineLat(points, lat) {
@@ -58,7 +57,7 @@ function interpolatePolylineLat(points, lat) {
   return pts[pts.length - 1][1];
 }
 
-export function resolveKeralaTopography(lat, lng, elevation = null) {
+function resolveKeralaTopography(lat, lng, elevation = null) {
   const inPalakkadGap = (10.62 <= lat && lat <= 10.90) && (76.25 <= lng && lng <= 76.90);
   const cLng = interpolatePolylineLat(KERALA_COAST_POINTS, lat);
   const rLng = interpolatePolylineLat(KERALA_RIDGE_POINTS, lat);
@@ -82,8 +81,8 @@ export function resolveKeralaTopography(lat, lng, elevation = null) {
 
   if (elevation !== null && elevation > 0) {
     const elev = elevation;
-    let slope = 2.0;
-    let soil = 3;
+    let slope;
+    let soil;
     if (elev < 15.0) {
       slope = Math.max(0.5, 0.5 + (elev / 15.0) * 2.5);
       soil = 3;
@@ -111,9 +110,9 @@ export function resolveKeralaTopography(lat, lng, elevation = null) {
     return { elevation: Math.round(elev * 10) / 10, slope: Math.round(Math.min(52.0, slope) * 10) / 10, soil };
   }
 
-  let elev = 5.0;
-  let slope = 1.0;
-  let soil = 3;
+  let elev;
+  let slope;
+  let soil;
 
   if (relPos < 0.15) {
     elev = 2.0 + (relPos / 0.15) * 13.0;
@@ -173,14 +172,7 @@ const createHotspotIcon = () => {
   });
 };
 
-const createHomeMarkerIcon = () => {
-  return L.divIcon({
-    className: 'custom-ios-home-marker',
-    html: '<div class="ios-home-marker"><span style="font-size:10px">🏠</span></div>',
-    iconSize: [22, 22],
-    iconAnchor: [11, 11]
-  });
-};
+
 
 const createGPSLocationMarkerIcon = () => {
   return L.divIcon({
@@ -216,6 +208,7 @@ const createShelterMarkerIcon = (shelter) => {
 
 const createClusterMarkerIcon = (incident) => {
   const isVerified = incident.status === 'verified';
+  const isAutoVerified = incident.is_auto_verified || (isVerified && incident.report_count >= 5);
   const markerClass = isVerified ? 'ios-verified-cluster-marker' : 'ios-pending-cluster-marker';
   const emojiMap = {
     'mud_crack': '⚡',
@@ -225,14 +218,14 @@ const createClusterMarkerIcon = (incident) => {
     'slope_movement': '⛰️'
   };
   const emoji = emojiMap[incident.primary_hazard_type] || '⚠️';
-  const badgeText = isVerified ? 'VERIFIED' : `${incident.report_count}`;
+  const badgeText = isAutoVerified ? `✓ ${incident.report_count}` : isVerified ? 'VERIFIED' : `${incident.report_count}`;
 
   return L.divIcon({
     className: 'custom-ios-cluster-marker-frame',
     html: `
       <div class="${markerClass}">
         <span class="cluster-emoji">${emoji}</span>
-        <span class="cluster-badge-count">${badgeText}</span>
+        <span class="cluster-badge-count ${isAutoVerified ? 'auto-verified' : ''}">${badgeText}</span>
       </div>
     `,
     iconSize: [32, 32],
@@ -246,12 +239,12 @@ function IosSwitch({ checked, onChange, label }) {
       <div className={`ios-switch-bg ${checked ? 'active' : ''}`}>
         <div className="ios-switch-thumb" />
       </div>
-      {label && <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-primary)', letterSpacing: '0.5px', textTransform: 'uppercase' }}>{label}</span>}
+      {label && <span style={{ fontSize: '11px', fontWeight: '550', color: 'var(--text-primary)', letterSpacing: '0.5px', textTransform: 'uppercase' }}>{label}</span>}
     </div>
   );
 }
 
-function MapClickInterceptor({ pinDropModeRef, onPinDrop, onSelectNode }) {
+function MapClickInterceptor({ pinDropModeRef, onPinDrop, onSelectNode, proximityScope }) {
   useMapEvents({
     click(e) {
       const { lat, lng } = e.latlng;
@@ -262,8 +255,13 @@ function MapClickInterceptor({ pinDropModeRef, onPinDrop, onSelectNode }) {
         return;
       }
 
-      // Standard Topography Inspection
-      // Accurate Kerala Geological Topography & Slope Model
+      // If in "Near Me" (local) mode, do NOT switch to All Kerala and do NOT mark custom nodes.
+      // Target node inspection and custom sector marking are strictly reserved for "All Kerala" mode.
+      if (proximityScope !== 'state') {
+        return;
+      }
+
+      // Standard Topography Inspection (Target Node Selection in All Kerala mode only)
       const { elevation: approxElev, slope: calculatedSlope, soil: soilType } = resolveKeralaTopography(lat, lng);
 
       const freshNode = {
@@ -273,7 +271,8 @@ function MapClickInterceptor({ pinDropModeRef, onPinDrop, onSelectNode }) {
         lng: lng,
         slope: calculatedSlope,
         elevation: approxElev,
-        soil: soilType
+        soil: soilType,
+        isLiveGps: false
       };
 
       onSelectNode(freshNode);
@@ -297,10 +296,25 @@ function getHaversineDistanceKm(lat1, lon1, lat2, lon2) {
 }
 
 export default function App() {
+  // Phase 2 Auth & Profile State
+  const [user, setUser] = useState(() => {
+    const saved = localStorage.getItem('terrarisk_user');
+    try { return saved ? JSON.parse(saved) : null; } catch { return null; }
+  });
+  const [token, setToken] = useState(() => localStorage.getItem('terrarisk_token') || '');
+  const isAuthorityUser = Boolean(user && (user.role === 'Authority_Admin' || user.role === 'Admin'));
+
+  const [toast, setToast] = useState({ show: false, message: '', type: 'info' });
+
+  const triggerToast = useCallback((message, type = 'info') => {
+    setToast({ show: true, message, type });
+    setTimeout(() => setToast(prev => ({ ...prev, show: false })), 4000);
+  }, []);
+
   const [selectedNode, setSelectedNode] = useState(KERALA_NODES[0]);
   const [simMode, setSimMode] = useState(false);
-  const [showHotspots, setShowHotspots] = useState(false);
-  const [showIncidents, setShowIncidents] = useState(false);
+  const [showHotspots, setShowHotspots] = useState(!isAuthorityUser);
+  const [showIncidents, setShowIncidents] = useState(!isAuthorityUser);
   const [showTelemetryNodes, setShowTelemetryNodes] = useState(false);
   const [hotspots, setHotspots] = useState([]);
   const [incidents, setIncidents] = useState([]);
@@ -309,14 +323,7 @@ export default function App() {
   const [riskData, setRiskData] = useState({ risk_percentage: 0, live_rainfall: 0, live_humidity: 50, alert_text: "", geo_name: "", true_elevation: 0 });
   const [forecastData, setForecastData] = useState([]);
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark');
-  const [toast, setToast] = useState({ show: false, message: '', type: 'info' });
 
-  // Phase 2 Auth & Profile State
-  const [user, setUser] = useState(() => {
-    const saved = localStorage.getItem('terrarisk_user');
-    try { return saved ? JSON.parse(saved) : null; } catch { return null; }
-  });
-  const [token, setToken] = useState(() => localStorage.getItem('terrarisk_token') || '');
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [safetyReport, setSafetyReport] = useState(null);
   const [checkingSafety, setCheckingSafety] = useState(false);
@@ -339,11 +346,11 @@ export default function App() {
   const [radarOpacity, setRadarOpacity] = useState(0.75);
   const [showHillshade, setShowHillshade] = useState(false);
   const [showSlopeMesh, setShowSlopeMesh] = useState(false);
-  const [showHeatmap, setShowHeatmap] = useState(() => !user || user.role !== 'Authority_Admin');
+  const [showHeatmap, setShowHeatmap] = useState(!isAuthorityUser);
 
   // Phase 7 Safe Evacuation Route Planner & Relief Directory State
   const [shelters, setShelters] = useState([]);
-  const [showShelters, setShowShelters] = useState(false);
+  const [showShelters, setShowShelters] = useState(!isAuthorityUser);
   const [activeRoutePlan, setActiveRoutePlan] = useState(null);
   const [planningRoute, setPlanningRoute] = useState(false);
   const [selectedShelter, setSelectedShelter] = useState(null);
@@ -351,15 +358,14 @@ export default function App() {
   const [occupancyEditShelter, setOccupancyEditShelter] = useState(null);
   const [isOccupancyModalOpen, setIsOccupancyModalOpen] = useState(false);
 
-  // Phase 8 Offline PWA Hardening & Emergency SOS State
+  // Phase 8 Offline PWA Hardening
   const [isOnline, setIsOnline] = useState(() => (typeof navigator !== 'undefined' ? navigator.onLine : true));
-  const [isSOSModalOpen, setIsSOSModalOpen] = useState(false);
   const [isHelplinesModalOpen, setIsHelplinesModalOpen] = useState(false);
 
-  // Extra Upgrades: Family Safety Circle & Missing Persons SOS Board
-  const [isFamilyModalOpen, setIsFamilyModalOpen] = useState(false);
+  // Missing Persons SOS Board
   const [isMissingModalOpen, setIsMissingModalOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [showLocationPermissionPrompt, setShowLocationPermissionPrompt] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   const mapRef = useRef(null);
@@ -395,16 +401,17 @@ export default function App() {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
-  }, []);
+  }, [triggerToast]);
 
   // Hyper-Local Proximity Scope State: 'local' (30 km radius of user / GPS) vs 'state' (All Kerala)
   const [proximityScope, setProximityScope] = useState(() => (!user || user.role !== 'Authority_Admin' ? 'local' : 'state'));
   const [deviceCoords, setDeviceCoords] = useState(null);
   const [isLocatingDevice, setIsLocatingDevice] = useState(false);
 
-  // Request Live Device GPS Geolocation Permission
-  const requestDeviceLocation = (autoFly = true) => {
+  // Request Live Device GPS Geolocation Permission & Synchronize Weather Forecast
+  const requestDeviceLocation = useCallback((autoFly = true) => {
     if (!navigator.geolocation) {
+      if (autoFly) setShowLocationPermissionPrompt(true);
       triggerToast("Geolocation is not supported by your browser.", "warning");
       return;
     }
@@ -414,76 +421,86 @@ export default function App() {
         const lat = parseFloat(pos.coords.latitude.toFixed(4));
         const lng = parseFloat(pos.coords.longitude.toFixed(4));
         const accuracy = Math.round(pos.coords.accuracy || 15);
-        
+
         const locObj = { lat, lng, accuracy, label: 'Live GPS Location' };
         setDeviceCoords(locObj);
         setProximityScope('local');
         setIsLocatingDevice(false);
-        
+        setShowLocationPermissionPrompt(false);
+
+        // Calculate localized topography for current coordinates
+        const { elevation: approxElev, slope: calculatedSlope, soil: soilType } = resolveKeralaTopography(lat, lng);
+
+        // Synchronize selected node so risk prediction and weather forecast update to current location
+        setSelectedNode({
+          id: `Live GPS Sector (${lat.toFixed(3)}°N, ${lng.toFixed(3)}°E)`,
+          displayName: `Live Location (${lat.toFixed(2)}°, ${lng.toFixed(2)}°)`,
+          lat: lat,
+          lng: lng,
+          slope: calculatedSlope,
+          elevation: approxElev,
+          soil: soilType,
+          isLiveGps: true
+        });
+
         if (autoFly && mapRef.current) {
           mapRef.current.flyTo([lat, lng], 13, { animate: true, duration: 1.2 });
         }
-        triggerToast(`📍 Live GPS Locked: [${lat}°N, ${lng}°E] (±${accuracy}m). Filtered local hazards.`, "success");
+        triggerToast(`📍 Live Location Active: [${lat}°N, ${lng}°E]. Weather & hazard metrics synced.`, "success");
       },
       (err) => {
         setIsLocatingDevice(false);
         console.log("Device geolocation error or permission dismissed:", err.message);
         if (autoFly) {
-          triggerToast("Device location permission not granted. Showing registered sector.", "info");
+          setShowLocationPermissionPrompt(true);
+          triggerToast("Location access required. Please enable location in system settings.", "warning");
         }
       },
-      { enableHighAccuracy: true, timeout: 9000, maximumAge: 60000 }
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
-  };
+  }, [triggerToast]);
 
   // Prompt device location permission on initial mount for citizen/public users
   useEffect(() => {
     if (navigator.geolocation && (!user || user.role !== 'Authority_Admin')) {
-      requestDeviceLocation(false);
+      const timer = setTimeout(() => {
+        requestDeviceLocation(false);
+      }, 100);
+      return () => clearTimeout(timer);
     }
-  }, []);
+  }, [user, requestDeviceLocation]);
 
   // Role-Based Smart Map Discovery: Auto-enable vital safety layers for Citizens & Public visitors,
   // while preserving a clean tactical canvas for Authority Admins.
   useEffect(() => {
-    const isAdmin = user && (user.role === 'Authority_Admin' || user.role === 'Admin');
-    if (!isAdmin) {
-      // Citizen / Public Mode: Enable relief camps, alerts, and hazard heatmaps for maximum safety visibility
-      setShowShelters(true);
-      setShowIncidents(true);
-      setShowHotspots(true);
-      setShowHeatmap(true);
-      setProximityScope('local');
-    } else {
-      // Authority Admin Mode: Keep clean tactical canvas
-      setShowShelters(false);
-      setShowIncidents(false);
-      setShowHotspots(false);
-      setShowHeatmap(false);
-      setProximityScope('state');
-    }
+    const isAdmin = Boolean(user && (user.role === 'Authority_Admin' || user.role === 'Admin'));
+    const timer = setTimeout(() => {
+      setShowShelters(!isAdmin);
+      setShowIncidents(!isAdmin);
+      setShowHotspots(!isAdmin);
+      setShowHeatmap(!isAdmin);
+      setProximityScope(isAdmin ? 'state' : 'local');
+    }, 0);
+    return () => clearTimeout(timer);
   }, [user]);
 
-  // Current user's focus anchor for hyper-local filtering (Prioritizes Live GPS -> Profile Home -> Selected Node)
+  // Current user's focus anchor for hyper-local filtering (Prioritizes Live GPS -> Selected Node in All Kerala)
   const userFocusCoords = useMemo(() => {
     if (deviceCoords) {
       return { lat: deviceCoords.lat, lng: deviceCoords.lng, label: 'Live GPS', isLiveGps: true, accuracy: deviceCoords.accuracy };
     }
-    if (user?.lat && user?.lng) {
-      return { lat: user.lat, lng: user.lng, label: `${user.district || 'Home'}`, isLiveGps: false };
-    }
-    if (selectedNode?.lat && selectedNode?.lng) {
+    if (proximityScope === 'state' && selectedNode?.lat && selectedNode?.lng) {
       return { lat: selectedNode.lat, lng: selectedNode.lng, label: selectedNode.displayName || selectedNode.id.split(' (')[0], isLiveGps: false };
     }
-    return { lat: 11.5542, lng: 76.1308, label: 'Wayanad (Meppadi)', isLiveGps: false };
-  }, [deviceCoords, user, selectedNode]);
+    return { lat: 10.5, lng: 76.2, label: 'Live Location', isLiveGps: false };
+  }, [deviceCoords, selectedNode, proximityScope]);
 
-  // Auto-Fly Map to User Home GPS or Target Node on Change
+  // Auto-Fly Map to User Home GPS on acquisition (only when device location is actively acquired)
   useEffect(() => {
-    if (userFocusCoords && mapRef.current && proximityScope === 'local') {
-      mapRef.current.flyTo([userFocusCoords.lat, userFocusCoords.lng], 12, { animate: true, duration: 1.2 });
+    if (deviceCoords && mapRef.current && proximityScope === 'local') {
+      mapRef.current.flyTo([deviceCoords.lat, deviceCoords.lng], 13, { animate: true, duration: 1.2 });
     }
-  }, [userFocusCoords, proximityScope]);
+  }, [deviceCoords, proximityScope]);
 
   // Filtered Datasets: Only show hazards, shelters, and hotspots relevant to user when in 'local' scope
   const displayedIncidents = useMemo(() => {
@@ -532,42 +549,61 @@ export default function App() {
 
   // Load hotspots
   useEffect(() => {
-    axios.get('http://127.0.0.1:5000/api/hotspots')
+    api.get('/api/hotspots')
       .then(res => setHotspots(res.data))
-      .catch(err => console.log("System data arrays synced."));
+      .catch(() => console.log("System data arrays synced."));
   }, []);
 
   // Fetch active incidents (Phase 3)
   const fetchActiveIncidents = () => {
-    axios.get('http://127.0.0.1:5000/api/incidents/active')
+    api.get('/api/incidents/active')
       .then(res => {
         if (res.data.success) {
           setIncidents(res.data.incidents);
         }
       })
-      .catch(err => console.log("Incidents sync gap."));
+      .catch(() => console.log("Incidents sync gap."));
+  };
+
+  // Authority 1-Tap Incident Resolution from Map
+  const handleResolveClusterFromMap = async (clusterId, e) => {
+    if (e) e.stopPropagation();
+    try {
+      const res = await api.post('/api/incidents/resolve', {
+        cluster_id: clusterId,
+        notes: "Site rectified & cleared from live map by Authority Admin."
+      });
+      if (res.data.success) {
+        triggerToast("✓ Hazard rectified & cleared. Marker removed from live map.", "success");
+        fetchActiveIncidents();
+      } else {
+        triggerToast(res.data.error || "Failed to resolve hazard.", "error");
+      }
+    } catch (err) {
+      triggerToast(err.response?.data?.error || "Error resolving hazard.", "error");
+    }
   };
 
   // Fetch active emergency broadcasts (Phase 5)
   const fetchActiveBroadcasts = () => {
-    axios.get('http://127.0.0.1:5000/api/alerts/active-broadcasts')
+    api.get('/api/alerts/active-broadcasts')
       .then(res => {
         if (res.data.success) {
           setActiveBroadcasts(res.data.broadcasts);
         }
       })
-      .catch(err => console.log("Broadcasts sync gap."));
+      .catch(() => console.log("Broadcasts sync gap."));
   };
 
   // Fetch relief shelters (Phase 7)
   const fetchShelters = () => {
-    axios.get('http://127.0.0.1:5000/api/shelters')
+    api.get('/api/shelters')
       .then(res => {
         if (res.data.success) {
           setShelters(res.data.shelters);
         }
       })
-      .catch(err => console.log("Shelters sync gap."));
+      .catch(() => console.log("Shelters sync gap."));
   };
 
   useEffect(() => {
@@ -584,14 +620,14 @@ export default function App() {
 
   // Phase 7 Evacuation Route Planner
   const handlePlanEvacuationRoute = async (targetShelter = null) => {
-    const startLat = user?.lat || selectedNode?.lat || 11.5542;
-    const startLng = user?.lng || selectedNode?.lng || 76.1308;
+    const startLat = deviceCoords?.lat || selectedNode?.lat || 11.5542;
+    const startLng = deviceCoords?.lng || selectedNode?.lng || 76.1308;
 
     setPlanningRoute(true);
     triggerToast("Calculating safest hazard-avoiding evacuation corridor...", "info");
 
     try {
-      const res = await axios.post('http://127.0.0.1:5000/api/routes/evacuate', {
+      const res = await api.post('/api/routes/evacuate', {
         start_lat: startLat,
         start_lng: startLng,
         destination_shelter_id: targetShelter?.id
@@ -604,50 +640,55 @@ export default function App() {
       } else {
         triggerToast(res.data.error || "Could not calculate evacuation route.", "error");
       }
-    } catch (err) {
+    } catch {
       triggerToast("Evacuation routing service connection error.", "error");
     } finally {
       setPlanningRoute(false);
     }
   };
 
-  // Verify auth session on mount
-  useEffect(() => {
-    if (token) {
-      axios.get('http://127.0.0.1:5000/api/auth/me', {
-        headers: { Authorization: `Bearer ${token}` }
-      })
-        .then(res => {
-          if (res.data.success) {
-            setUser(res.data.user);
-            localStorage.setItem('terrarisk_user', JSON.stringify(res.data.user));
-          }
-        })
-        .catch(err => {
-          console.log("Session expired or invalid token.");
-          handleLogout();
-        });
-    }
-  }, [token]);
-
-  const handleAuthSuccess = (newToken, newUser) => {
-    setToken(newToken);
-    setUser(newUser);
-    localStorage.setItem('terrarisk_token', newToken);
-    localStorage.setItem('terrarisk_user', JSON.stringify(newUser));
-  };
-
-  const handleLogout = () => {
+  const handleLogout = useCallback(() => {
     setToken('');
     setUser(null);
     setSafetyReport(null);
     localStorage.removeItem('terrarisk_token');
     localStorage.removeItem('terrarisk_user');
     triggerToast('Logged out of TerraRisk session.', 'info');
+  }, [triggerToast]);
+
+  // Verify auth session on mount
+  useEffect(() => {
+    if (token) {
+      api.get('/api/auth/me')
+        .then(res => {
+          if (res.data.success) {
+            setUser(res.data.user);
+            localStorage.setItem('terrarisk_user', JSON.stringify(res.data.user));
+          }
+        })
+        .catch(() => {
+          console.log("Session expired or invalid token.");
+          handleLogout();
+        });
+    }
+  }, [token, handleLogout]);
+
+  const handleAuthSuccess = (newToken, newUser) => {
+    setToken(newToken);
+    setUser(newUser);
+    localStorage.setItem('terrarisk_token', newToken);
+    localStorage.setItem('terrarisk_user', JSON.stringify(newUser));
+
+    // When citizen or volunteer logs in, immediately request live GPS coordinates to sync map and weather forecast
+    if (newUser && newUser.role !== 'Authority_Admin') {
+      setTimeout(() => {
+        requestDeviceLocation(true);
+      }, 100);
+    }
   };
 
   const transmitTelemetry = (nodeObj, currentSimMode, currentRain, currentSat) => {
-    axios.post('http://127.0.0.1:5000/api/predict', {
+    api.post('/api/predict', {
       lat: nodeObj.lat,
       lng: nodeObj.lng,
       slope: nodeObj.slope,
@@ -660,50 +701,61 @@ export default function App() {
       .then(res => {
         setRiskData(res.data);
         if (res.data.true_elevation !== undefined) {
-          setSelectedNode(prev => ({ 
-            ...prev, 
+          setSelectedNode(prev => ({
+            ...prev,
             elevation: res.data.true_elevation,
             slope: res.data.slope !== undefined ? res.data.slope : prev.slope,
             soil: res.data.soil !== undefined ? res.data.soil : prev.soil
           }));
         }
-        if (res.data.geo_name && nodeObj.id.startsWith("Sector Grid Box")) {
+        if (res.data.geo_name && (nodeObj.id.startsWith("Sector Grid Box") || nodeObj.id.startsWith("Live") || nodeObj.id.startsWith("Current") || nodeObj.id.startsWith("User"))) {
           setSelectedNode(prev => ({ ...prev, displayName: res.data.geo_name }));
         }
       })
-      .catch(err => console.log("Matrix execution error."));
+      .catch(() => console.log("Matrix execution error."));
 
-    axios.post('http://127.0.0.1:5000/api/forecast', { lat: nodeObj.lat, lng: nodeObj.lng })
+    api.post('/api/forecast', { lat: nodeObj.lat, lng: nodeObj.lng })
       .then(res => {
         if (res.data.success) setForecastData(res.data.forecast);
       })
-      .catch(err => console.log("Forecast sync gap."));
+      .catch(() => console.log("Forecast sync gap."));
   };
+
+  // Active evaluation node:
+  // In 'local' (Near Me) mode: Target node locking is disabled. Uses Live GPS if active or a neutral baseline.
+  // In 'state' (All Kerala) mode: Target node system is active. Uses selectedNode.
+  const activeEvalNode = useMemo(() => {
+    if (proximityScope === 'local') {
+      if (deviceCoords) {
+        const { elevation: approxElev, slope: calculatedSlope, soil: soilType } = resolveKeralaTopography(deviceCoords.lat, deviceCoords.lng);
+        return {
+          id: `Live GPS Sector (${deviceCoords.lat.toFixed(3)}°N, ${deviceCoords.lng.toFixed(3)}°E)`,
+          displayName: `Live Location (${deviceCoords.lat.toFixed(2)}°, ${deviceCoords.lng.toFixed(2)}°)`,
+          lat: deviceCoords.lat,
+          lng: deviceCoords.lng,
+          slope: calculatedSlope,
+          elevation: approxElev,
+          soil: soilType,
+          isLiveGps: true
+        };
+      }
+      return {
+        id: 'Near Me Area',
+        displayName: 'Live Location (Acquiring GPS...)',
+        lat: 10.5,
+        lng: 76.2,
+        slope: 5.0,
+        elevation: 50,
+        soil: 2,
+        isLiveGps: false
+      };
+    }
+    return selectedNode || KERALA_NODES[0];
+  }, [proximityScope, deviceCoords, selectedNode]);
 
   useEffect(() => {
-    transmitTelemetry(selectedNode, simMode, rainfall, saturation);
-  }, [selectedNode, simMode, rainfall, saturation]);
-
-  const triggerToast = (message, type = 'info') => {
-    setToast({ show: true, message, type });
-    setTimeout(() => setToast(prev => ({ ...prev, show: false })), 4000);
-  };
-
-  const handleSmsBlast = async () => {
-    try {
-      triggerToast("Accessing telecom gateway...", "info");
-      const res = await axios.post('http://127.0.0.1:5000/api/broadcast', {
-        alert_text: riskData.alert_text
-      });
-      if (res.data.success) {
-        triggerToast("✓ SMS Broadcast Dispatched via Twilio", "success");
-      } else {
-        triggerToast(`Dispatch exception: ${res.data.error || 'Check server logs'}`, "error");
-      }
-    } catch (err) {
-      triggerToast("Connection handshake error.", "error");
-    }
-  };
+    transmitTelemetry(activeEvalNode, simMode, rainfall, saturation);
+  }, [activeEvalNode, simMode, rainfall, saturation]);
 
   // Phase 2: Check My Area Action
   const handleCheckMyArea = async () => {
@@ -712,33 +764,21 @@ export default function App() {
       return;
     }
 
-    const homeLat = user.lat || 11.5361;
-    const homeLng = user.lng || 76.1667;
+    const currentLat = deviceCoords?.lat || selectedNode?.lat || 11.5542;
+    const currentLng = deviceCoords?.lng || selectedNode?.lng || 76.1308;
+    const label = deviceCoords ? 'Live GPS Location' : (selectedNode?.displayName || 'Current Sector');
 
     setCheckingSafety(true);
-    triggerToast(`Evaluating real-time hazard status for ${user.name}'s home...`, 'info');
-
-    const userHomeNode = {
-      id: `Home Sector (${user.district || 'Kerala'})`,
-      displayName: `${user.name}'s Home Sector (${user.district})`,
-      lat: homeLat,
-      lng: homeLng,
-      slope: 28.5,
-      elevation: 750,
-      soil: 1
-    };
-    setSelectedNode(userHomeNode);
+    triggerToast(`Evaluating real-time hazard status for ${label}...`, 'info');
 
     try {
-      const res = await axios.get(`http://127.0.0.1:5000/api/user/check-safety?lat=${homeLat}&lng=${homeLng}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await api.get(`/api/user/check-safety?lat=${currentLat}&lng=${currentLng}`);
       if (res.data.success) {
         setSafetyReport(res.data);
         const statusType = res.data.status === 'Critical' ? 'error' : res.data.status === 'Advisory' ? 'info' : 'success';
         triggerToast(`Safety Report: ${res.data.status.toUpperCase()} level confirmed.`, statusType);
       }
-    } catch (err) {
+    } catch {
       triggerToast('Could not complete safety check. Check connection.', 'error');
     } finally {
       setCheckingSafety(false);
@@ -756,29 +796,21 @@ export default function App() {
     triggerToast('📍 Pin-Drop Mode Active: Click anywhere on the map to mark the hazard.', 'info');
   };
 
-  // Phase 4: Open Authority Command Suite with Auto-Auth Fallback
+  // Phase 4: Open Authority Command Suite
   const handleOpenAuthoritySuite = async () => {
     if (token && user && (user.role === 'Authority_Admin' || user.role === 'Volunteer')) {
       setIsAuthorityPortalOpen(true);
       return;
     }
 
-    try {
-      const authRes = await axios.post('http://127.0.0.1:5000/api/auth/login', {
-        phone: '+919999900000',
-        password: 'Admin@Terra2026!'
-      });
-      if (authRes.data.success && authRes.data.token) {
-        setUser(authRes.data.user);
-        setToken(authRes.data.token);
-        localStorage.setItem('terrarisk_user', JSON.stringify(authRes.data.user));
-        localStorage.setItem('terrarisk_token', authRes.data.token);
-        triggerToast("✓ Authorized as KSDMA Disaster Authority Admin", "success");
-      }
-    } catch (err) {
-      console.warn("Authority auto-login error:", err);
+    if (!user) {
+      setIsAuthModalOpen(true);
+      triggerToast("Please sign in with your Authority Officer or Volunteer account.", "info");
+      return;
     }
-    setIsAuthorityPortalOpen(true);
+
+    // Standard Citizen attempted to access command suite
+    triggerToast("Access Restricted: Command Center is restricted to KSDMA Disaster Officers & Volunteers.", "warning");
   };
 
   const dominantWeather = forecastData[0]?.condition || "clear";
@@ -797,17 +829,22 @@ export default function App() {
   };
 
   const risk = riskData.risk_percentage || 0;
-  const isGuardActive = selectedNode.slope < 8.0 && selectedNode.elevation < 150.0;
+  const isGuardActive = activeEvalNode.slope < 8.0 && activeEvalNode.elevation < 150.0;
   const gaugeColor = isGuardActive ? 'var(--accent-green)' : risk >= 85 ? 'var(--accent-red)' : risk >= 50 ? 'var(--accent-orange)' : 'var(--accent-green)';
   const circumference = 2 * Math.PI * 44;
   const strokeDashoffset = circumference - (risk / 100) * circumference;
-  const displayLabel = selectedNode.displayName || selectedNode.id;
+  const displayLabel = activeEvalNode.displayName || activeEvalNode.id;
   const currentRainInt = simMode ? rainfall : (riskData.live_rainfall || 0);
 
-  const globalAppLayoutClass = theme === 'light' ? `global-bg-${dominantWeather}` : '';
+  // Check if the current selected node corresponds to the live device GPS position
+  const isSelectedAtLiveGps = Boolean(
+    deviceCoords && activeEvalNode && (
+      activeEvalNode.isLiveGps ||
+      (Math.abs(activeEvalNode.lat - deviceCoords.lat) < 0.0001 && Math.abs(activeEvalNode.lng - deviceCoords.lng) < 0.0001)
+    )
+  );
 
-  const credScore = user?.credibility_score ?? 50;
-  const credColor = credScore >= 80 ? 'var(--accent-green)' : credScore >= 50 ? '#38BDF8' : 'var(--accent-orange)';
+  const globalAppLayoutClass = theme === 'light' ? `global-bg-${dominantWeather}` : '';
 
   return (
     <div className={`app-main-viewport-frame ${globalAppLayoutClass}`} style={{ minHeight: '100vh', paddingBottom: '40px', position: 'relative', overflowX: 'hidden' }}>
@@ -816,7 +853,7 @@ export default function App() {
       {/* Top Navigation Bar with Minimalist Brand & Left Drawer Trigger */}
       <header className="ios-glass header-nav-bar minimalist-header">
         <div className="header-left-cluster">
-          <button 
+          <button
             className="btn-menu-drawer-toggle"
             onClick={() => setIsSidebarOpen(true)}
             title="Open Disaster Command Menu"
@@ -835,7 +872,35 @@ export default function App() {
         </div>
 
         {/* Right Area: System Status & User Profile Trigger */}
+        {/* Right Area: System Status, Citizen Location Trigger & User Profile */}
         <div className="header-right-cluster">
+          {/* Citizen Location Access Quick Button */}
+          {user && user.role === 'Citizen' && (
+            <button
+              type="button"
+              className={`header-location-btn ${deviceCoords ? 'active-locked' : ''} ${isLocatingDevice ? 'locating' : ''}`}
+              onClick={() => requestDeviceLocation(true)}
+              disabled={isLocatingDevice}
+              title={
+                deviceCoords
+                  ? `Live GPS Active: [${deviceCoords.lat}°N, ${deviceCoords.lng}°E] (±${deviceCoords.accuracy}m). Click to focus map on your live position.`
+                  : "Enable live GPS location access to find your exact location on the map"
+              }
+            >
+              <div className="header-loc-icon-wrap">
+                <Navigation
+                  size={14}
+                  className={isLocatingDevice ? 'spin-anim' : ''}
+                  color={deviceCoords ? '#30D158' : '#38BDF8'}
+                />
+                {deviceCoords && <span className="header-loc-pulse" />}
+              </div>
+              <span className="header-loc-text">
+                {isLocatingDevice ? 'Locating...' : deviceCoords ? 'Live GPS Active' : 'My Location'}
+              </span>
+            </button>
+          )}
+
           <div className="header-status-pill">
             <span className="status-indicator-dot" />
             <span className="status-indicator-text">Matrix Active</span>
@@ -866,10 +931,8 @@ export default function App() {
       <LeftSidebarDrawer
         isOpen={isSidebarOpen}
         onClose={() => setIsSidebarOpen(false)}
-        onOpenSOS={() => setIsSOSModalOpen(true)}
         onOpenSafeRoute={() => handlePlanEvacuationRoute()}
         onOpenReportHazard={handleStartReportHazard}
-        onOpenFamilySafety={() => setIsFamilyModalOpen(true)}
         onOpenMissingPersons={() => setIsMissingModalOpen(true)}
         onOpenAuthoritySuite={handleOpenAuthoritySuite}
         onOpenSettings={() => setIsSettingsModalOpen(true)}
@@ -891,8 +954,8 @@ export default function App() {
           <div className="offline-mode-indicator-strip ios-glass">
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <WifiOff size={15} color="#F59E0B" className="bounce-anim" />
-              <span style={{ fontSize: '12px', fontWeight: '800', color: 'var(--text-primary)' }}>
-                OFFLINE MODE ACTIVE: Operating on cached relief camps and emergency protocols. Cellular SMS SOS & voice helplines remain fully active.
+              <span style={{ fontSize: '12px', fontWeight: '550', color: 'var(--text-primary)' }}>
+                OFFLINE MODE ACTIVE: Operating on cached relief camps and emergency protocols. Voice helplines remain fully active.
               </span>
             </div>
             <button onClick={() => setIsHelplinesModalOpen(true)} className="offline-helpline-quick-btn">
@@ -904,7 +967,7 @@ export default function App() {
         {/* Phase 5: Public Flashing Geo-Fenced Red Emergency Broadcast Banner */}
         <BroadcastAlertBanner
           broadcasts={activeBroadcasts}
-          user={user}
+          currentCoords={deviceCoords || selectedNode}
           onFocusAlert={(bcast) => {
             setSelectedNode({
               id: `Alert Epicenter (${bcast.lat.toFixed(3)}°N, ${bcast.lng.toFixed(3)}°E)`,
@@ -915,7 +978,8 @@ export default function App() {
               elevation: 900,
               soil: 1
             });
-            triggerToast(`Map focused on active warning perimeter (${bcast.radius_km}km radius).`, 'info');
+            setProximityScope('state');
+            triggerToast(`Map focused on active warning perimeter (${bcast.radius_km}km radius). Target node active.`, 'info');
           }}
           onFindShelter={() => handlePlanEvacuationRoute()}
         />
@@ -926,17 +990,11 @@ export default function App() {
             safetyData={safetyReport}
             user={user}
             onClose={() => setSafetyReport(null)}
-            onFocusHome={() => {
-              if (user?.lat && user?.lng) {
-                setSelectedNode({
-                  id: `Home Sector (${user.district || 'Kerala'})`,
-                  displayName: `${user.name}'s Home (${user.district})`,
-                  lat: user.lat,
-                  lng: user.lng,
-                  slope: 28.5,
-                  elevation: 750,
-                  soil: 1
-                });
+            onFocusLocation={() => {
+              const currentLat = deviceCoords?.lat || selectedNode?.lat || 11.5542;
+              const currentLng = deviceCoords?.lng || selectedNode?.lng || 76.1308;
+              if (mapRef.current) {
+                mapRef.current.flyTo([currentLat, currentLng], 13, { animate: true, duration: 1.2 });
               }
             }}
           />
@@ -972,7 +1030,7 @@ export default function App() {
             <div className="map-pin-drop-banner ios-glass">
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <MapPin size={16} color="var(--accent)" className="bounce-anim" />
-                <span style={{ fontSize: '12px', fontWeight: '800', color: 'var(--text-primary)' }}>
+                <span style={{ fontSize: '12px', fontWeight: '550', color: 'var(--text-primary)' }}>
                   PIN-DROP MODE ACTIVE: Click anywhere on the map to pinpoint hazard coordinates
                 </span>
               </div>
@@ -996,7 +1054,8 @@ export default function App() {
                 elevation: 500,
                 soil: 1
               });
-              triggerToast(`Focused on ${dest.name}.`, 'info');
+              setProximityScope('state');
+              triggerToast(`Focused on ${dest.name}. Target node active.`, 'info');
             }}
           />
 
@@ -1033,36 +1092,28 @@ export default function App() {
           {/* Phase 6: Floating Terrain & Slope Legend */}
           <TerrainSlopeLegend />
 
-          {/* Hyper-Local Proximity Scope Toggle Bar */}
+          {/* Hyper-Local Proximity Scope Toggle Capsule */}
           <div className="proximity-scope-bar-wrapper">
-            <div className="proximity-scope-pill ios-glass">
+            <div className="proximity-scope-capsule ios-glass">
               <button
                 type="button"
                 className={`scope-pill-btn ${proximityScope === 'local' ? 'active' : ''}`}
                 onClick={() => {
                   setProximityScope('local');
-                  if (mapRef.current && userFocusCoords) {
-                    mapRef.current.flyTo([userFocusCoords.lat, userFocusCoords.lng], 12, { animate: true, duration: 1.0 });
+                  if (deviceCoords) {
+                    if (mapRef.current) {
+                      mapRef.current.flyTo([deviceCoords.lat, deviceCoords.lng], 13, { animate: true, duration: 1.0 });
+                    }
+                    triggerToast('📍 Near Me Active: Filtered to live GPS safety zone (30km).', 'info');
+                  } else {
+                    requestDeviceLocation(true);
                   }
-                  triggerToast(`Filtered to local sector: ${userFocusCoords.label} (30 km radius).`, 'info');
                 }}
                 title="Filter map to only show hazards, shelters, and risk within 30 km of your location"
               >
                 <MapPin size={13} color={proximityScope === 'local' ? '#38BDF8' : 'var(--text-secondary)'} />
-                <span>Near Me ({userFocusCoords.label})</span>
+                <span>Near Me {deviceCoords ? '(Live GPS)' : ''}</span>
                 {proximityScope === 'local' && <span className="scope-active-dot" />}
-              </button>
-
-              {/* Live Device GPS Geolocation Trigger Button */}
-              <button
-                type="button"
-                className={`scope-pill-btn scope-gps-btn ${deviceCoords ? 'gps-locked' : ''}`}
-                onClick={() => requestDeviceLocation(true)}
-                disabled={isLocatingDevice}
-                title="Detect live browser GPS device coordinates"
-              >
-                <Navigation size={12} className={isLocatingDevice ? 'spin-anim' : ''} color={deviceCoords ? '#30D158' : '#38BDF8'} />
-                <span>{isLocatingDevice ? 'Locating...' : deviceCoords ? 'GPS Active' : 'Enable GPS'}</span>
               </button>
 
               <button
@@ -1071,16 +1122,39 @@ export default function App() {
                 onClick={() => {
                   setProximityScope('state');
                   if (mapRef.current) {
-                    mapRef.current.flyTo([10.5, 76.2], 8, { animate: true, duration: 1.0 });
+                    mapRef.current.flyTo([selectedNode?.lat || 10.5, selectedNode?.lng || 76.2], 8.5, { animate: true, duration: 1.0 });
                   }
-                  triggerToast('Showing all-Kerala state-wide hazard feed.', 'info');
+                  triggerToast('🌐 All Kerala active: Target node inspection system enabled. Click anywhere to inspect sectors.', 'info');
                 }}
-                title="View all hazards and shelters across Kerala"
+                title="View all hazards and shelters across Kerala with target node inspection"
               >
                 <Compass size={13} color={proximityScope === 'state' ? 'var(--accent)' : 'var(--text-secondary)'} />
                 <span>All Kerala</span>
               </button>
             </div>
+          </div>
+
+          {/* Dedicated Modern GPS Floating Action Button on Map */}
+          <div className="map-gps-fab-container">
+            <button
+              type="button"
+              className={`map-gps-fab ios-glass ${deviceCoords ? 'gps-locked' : ''} ${isLocatingDevice ? 'locating' : ''}`}
+              onClick={() => requestDeviceLocation(true)}
+              disabled={isLocatingDevice}
+              title={deviceCoords ? `Live GPS Locked: [${deviceCoords.lat}°N, ${deviceCoords.lng}°E] (±${deviceCoords.accuracy}m). Click to center map.` : "Acquire Live GPS Device Location"}
+            >
+              <div className="gps-fab-icon-wrap">
+                <Navigation
+                  size={16}
+                  className={isLocatingDevice ? 'spin-anim' : ''}
+                  color={deviceCoords ? '#30D158' : '#38BDF8'}
+                />
+                {deviceCoords && <span className="gps-fab-live-ping" />}
+              </div>
+              <span className="gps-fab-label">
+                {isLocatingDevice ? 'Acquiring GPS...' : deviceCoords ? `GPS Live (±${deviceCoords.accuracy}m)` : 'Locate Me'}
+              </span>
+            </button>
           </div>
 
           <MapContainer ref={mapRef} attributionControl={false} center={[11.25, 75.8]} zoom={9} minZoom={7.5} maxBounds={KERALA_BOUNDS} maxBoundsViscosity={1.0} style={{ height: '100%', width: '100%' }}>
@@ -1168,7 +1242,7 @@ export default function App() {
                     }}
                   >
                     <Tooltip direction="top">
-                      <span style={{ fontSize: '10.5px', fontWeight: '800', color: '#EF4444' }}>
+                      <span style={{ fontSize: '10.5px', fontWeight: '550', color: '#EF4444' }}>
                         ⚡ Steep Escarpment ({node.slope}&deg; Incline &bull; {node.elevation}m)
                       </span>
                     </Tooltip>
@@ -1192,8 +1266,8 @@ export default function App() {
               >
                 <Tooltip direction="top" offset={[0, -12]}>
                   <div style={{ padding: '2px 4px' }}>
-                    <span style={{ fontWeight: '800', fontSize: '11px', color: 'var(--text-primary)' }}>{shelter.name}</span>
-                    <div style={{ fontSize: '10px', color: 'var(--accent-green)', fontWeight: '700' }}>
+                    <span style={{ fontWeight: '600', fontSize: '11px', color: 'var(--text-primary)' }}>{shelter.name}</span>
+                    <div style={{ fontSize: '10px', color: 'var(--accent-green)', fontWeight: '500' }}>
                       {shelter.occupied}/{shelter.capacity} Beds &bull; {shelter.available_spots ?? (shelter.capacity - shelter.occupied)} Available
                     </div>
                   </div>
@@ -1201,22 +1275,22 @@ export default function App() {
               </Marker>
             ))}
 
-            {/* Active Selected Telemetry Node Pin */}
-            {selectedNode && (
+            {/* Active Selected Target Node Pin (Only rendered when All Kerala mode is selected) */}
+            {selectedNode && proximityScope === 'state' && !isSelectedAtLiveGps && (
               <Marker position={[selectedNode.lat, selectedNode.lng]} icon={createMarkerIcon(true)}>
-                <Tooltip direction="top" offset={[0, -5]}>
-                  <div style={{ color: 'var(--text-primary)', fontSize: '11px', fontWeight: '700' }}>
-                    🎯 {selectedNode.displayName || selectedNode.id.split(' (')[0]}
+                <Tooltip permanent offset={[0, -5]}>
+                  <div style={{ color: 'var(--accent)', fontSize: '11px', fontWeight: '550', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <MapPin size={10} /> {selectedNode.displayName || selectedNode.id.split(' (')[0]}
                   </div>
                 </Tooltip>
               </Marker>
             )}
 
-            {/* Static Telemetry Nodes Grid (Toggleable) */}
-            {showTelemetryNodes && KERALA_NODES.filter(n => n.id !== selectedNode?.id).map((node, i) => (
+            {/* Static Telemetry Nodes Grid (Only enabled and selectable in All Kerala mode) */}
+            {showTelemetryNodes && proximityScope === 'state' && KERALA_NODES.filter(n => n.id !== selectedNode?.id).map((node, i) => (
               <Marker key={`node_${i}`} position={[node.lat, node.lng]} icon={createMarkerIcon(false)} eventHandlers={{ click: () => setSelectedNode(node) }}>
                 <Tooltip direction="top" offset={[0, -5]}>
-                  <div style={{ color: 'var(--text-primary)', fontSize: '11px', fontWeight: '600' }}>{node.id.split(' (')[0]}</div>
+                  <div style={{ color: 'var(--text-primary)', fontSize: '11px', fontWeight: '500' }}>{node.id.split(' (')[0]}</div>
                 </Tooltip>
               </Marker>
             ))}
@@ -1225,7 +1299,7 @@ export default function App() {
             {showHotspots && displayedHotspots.map((spot, i) => (
               <Fragment key={i}>
                 <Marker position={[spot.lat, spot.lng]} icon={createHotspotIcon()}>
-                  <Tooltip direction="top"><span style={{ color: 'var(--text-primary)', fontWeight: '600', fontSize: '11px' }}>Historic: {spot.name}</span></Tooltip>
+                  <Tooltip direction="top"><span style={{ color: 'var(--text-primary)', fontWeight: '500', fontSize: '11px' }}>Historic: {spot.name}</span></Tooltip>
                 </Marker>
                 <Circle center={[spot.lat, spot.lng]} radius={10000} pathOptions={{ color: 'var(--accent-red)', fillColor: 'var(--accent-red)', fillOpacity: 0.03, weight: 1 }} />
               </Fragment>
@@ -1243,19 +1317,34 @@ export default function App() {
                         <span className="incident-popup-title">
                           {inc.primary_hazard_type.replace('_', ' ').toUpperCase()}
                         </span>
-                        <span className={`incident-popup-badge ${isVerified ? 'verified' : 'pending'}`}>
-                          {isVerified ? 'VERIFIED' : 'PENDING CLUSTER'}
+                        <span className={`incident-popup-badge ${isVerified ? (inc.is_auto_verified || inc.report_count >= 5 ? 'auto-verified' : 'verified') : 'pending'}`}>
+                          {isVerified ? (inc.is_auto_verified || inc.report_count >= 5 ? '⚡ AUTO-VERIFIED' : '✓ VERIFIED') : 'PENDING CLUSTER'}
                         </span>
                       </div>
+                      {(inc.is_auto_verified || (isVerified && inc.report_count >= 5)) && (
+                        <div style={{ fontSize: '10px', color: '#10B981', fontWeight: '700', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <span>✓ Crowd consensus: Auto-verified by {inc.report_count} field reports</span>
+                        </div>
+                      )}
                       <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>
                         {inc.report_count} {inc.report_count === 1 ? 'citizen report' : 'reports clustered'} (within 500m)
                       </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', fontWeight: '700', color: sevColor, marginBottom: '4px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', fontWeight: '550', color: sevColor, marginBottom: '4px' }}>
                         <span>Avg Severity: {inc.avg_severity}/5.0</span>
                       </div>
                       <div style={{ fontSize: '11px', color: 'var(--text-primary)', fontStyle: 'italic', maxWidth: '200px' }}>
                         "{inc.description}"
                       </div>
+                      {user?.role === 'Authority_Admin' && (
+                        <button
+                          type="button"
+                          className="incident-popup-clear-btn"
+                          onClick={(e) => handleResolveClusterFromMap(inc.cluster_id, e)}
+                          title="Site is rectified: mark cleared and remove from map"
+                        >
+                          <CheckCircle size={12} /> Mark Cleared & Remove
+                        </button>
+                      )}
                     </div>
                   </Tooltip>
                 </Marker>
@@ -1267,7 +1356,7 @@ export default function App() {
               <>
                 <Marker position={[deviceCoords.lat, deviceCoords.lng]} icon={createGPSLocationMarkerIcon()}>
                   <Tooltip permanent offset={[0, -10]}>
-                    <span style={{ fontSize: '10.5px', fontWeight: '800', color: '#0284C7' }}>
+                    <span style={{ fontSize: '10.5px', fontWeight: '550', color: '#0284C7' }}>
                       📍 You Are Here (Live GPS &bull; &plusmn;{deviceCoords.accuracy}m)
                     </span>
                   </Tooltip>
@@ -1279,24 +1368,6 @@ export default function App() {
                 />
               </>
             )}
-
-            {/* Registered Citizen Home Marker */}
-            {user?.lat && user?.lng && (!deviceCoords || Math.abs(user.lat - deviceCoords.lat) > 0.005) && (
-              <Marker position={[user.lat, user.lng]} icon={createHomeMarkerIcon()}>
-                <Tooltip permanent offset={[0, -8]}>
-                  <span style={{ fontSize: '10px', fontWeight: '700', color: 'var(--accent)' }}>🏠 {user.name}'s Home</span>
-                </Tooltip>
-              </Marker>
-            )}
-
-            {/* Target Selected Node */}
-            {!KERALA_NODES.some(n => n.id === selectedNode.id) && (
-              <Marker position={[selectedNode.lat, selectedNode.lng]} icon={createMarkerIcon(true)}>
-                <Tooltip permanent offset={[0, -5]}>
-                  <div style={{ color: 'var(--accent)', fontSize: '11px', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '4px' }}><MapPin size={10} /> Target Node Locked</div>
-                </Tooltip>
-              </Marker>
-            )}
             <MapClickInterceptor
               pinDropModeRef={pinDropModeRef}
               onPinDrop={(coords) => {
@@ -1305,6 +1376,7 @@ export default function App() {
                 setPinDropMode(false);
               }}
               onSelectNode={setSelectedNode}
+              proximityScope={proximityScope}
             />
           </MapContainer>
         </div>
@@ -1314,7 +1386,7 @@ export default function App() {
           {/* Column 1: Telemetry Controls */}
           <div className="ios-card ios-glass" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
-              <h3 style={{ fontSize: '12px', fontWeight: '700', margin: 0, display: 'flex', alignItems: 'center', gap: '8px', textTransform: 'uppercase' }}><Sliders size={14} color="var(--accent)" /> Telemetry Controls</h3>
+              <h3 style={{ fontSize: '12px', fontWeight: '600', margin: 0, display: 'flex', alignItems: 'center', gap: '8px', textTransform: 'uppercase' }}><Sliders size={14} color="var(--accent)" /> Telemetry Controls</h3>
               <IosSwitch checked={simMode} onChange={setSimMode} label="Simulation Mode" />
             </div>
 
@@ -1325,12 +1397,12 @@ export default function App() {
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
               <div style={{ background: 'var(--bg-primary)', padding: '12px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
-                <span style={{ fontSize: '10px', color: 'var(--text-secondary)', display: 'block', textTransform: 'uppercase', fontWeight: '700' }}>Slope Angle</span>
-                <span style={{ fontSize: '16px', fontWeight: '800', color: 'var(--text-primary)' }}>{selectedNode.slope}°</span>
+                <span style={{ fontSize: '10px', color: 'var(--text-secondary)', display: 'block', textTransform: 'uppercase', fontWeight: '500' }}>Slope Angle</span>
+                <span style={{ fontSize: '16px', fontWeight: '600', color: 'var(--text-primary)' }}>{activeEvalNode.slope}°</span>
               </div>
               <div style={{ background: 'var(--bg-primary)', padding: '12px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
-                <span style={{ fontSize: '10px', color: 'var(--text-secondary)', display: 'block', textTransform: 'uppercase', fontWeight: '700' }}>Elevation</span>
-                <span style={{ fontSize: '16px', fontWeight: '800', color: 'var(--text-primary)' }}>{selectedNode.elevation}m</span>
+                <span style={{ fontSize: '10px', color: 'var(--text-secondary)', display: 'block', textTransform: 'uppercase', fontWeight: '500' }}>Elevation</span>
+                <span style={{ fontSize: '16px', fontWeight: '600', color: 'var(--text-primary)' }}>{activeEvalNode.elevation}m</span>
               </div>
             </div>
 
@@ -1338,23 +1410,23 @@ export default function App() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 16px', background: 'var(--bg-primary)', borderRadius: '12px', fontSize: '13px', border: '1px solid var(--border-color)' }}>
                   <span style={{ color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '4px' }}><CloudRain size={13} /> Precipitation:</span>
-                  <span style={{ color: 'var(--text-primary)', fontWeight: '700' }}>{(Number(riskData.live_rainfall) || 0).toFixed(1)} mm/day</span>
+                  <span style={{ color: 'var(--text-primary)', fontWeight: '600' }}>{(Number(riskData.live_rainfall) || 0).toFixed(1)} mm/day</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 16px', background: 'var(--bg-primary)', borderRadius: '12px', fontSize: '13px', border: '1px solid var(--border-color)' }}>
                   <span style={{ color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '4px' }}><Thermometer size={13} /> Soil Saturation:</span>
-                  <span style={{ color: 'var(--text-primary)', fontWeight: '700' }}>{(Number(riskData.live_humidity) || 0).toFixed(0)}%</span>
+                  <span style={{ color: 'var(--text-primary)', fontWeight: '600' }}>{(Number(riskData.live_humidity) || 0).toFixed(0)}%</span>
                 </div>
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 <div className="ios-slider-container">
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-secondary)', fontWeight: '700' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-secondary)', fontWeight: '550' }}>
                     <span>Precipitation Input</span><span style={{ color: 'var(--accent)' }}>{rainfall} mm</span>
                   </div>
                   <input type="range" min="0" max="500" value={rainfall} onChange={(e) => setRainfall(e.target.value)} className="ios-slider" />
                 </div>
                 <div className="ios-slider-container">
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-secondary)', fontWeight: '700' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-secondary)', fontWeight: '550' }}>
                     <span>Matrix Saturation</span><span style={{ color: 'var(--accent)' }}>{saturation}%</span>
                   </div>
                   <input type="range" min="10" max="100" value={saturation} onChange={(e) => setSaturation(e.target.value)} className="ios-slider" />
@@ -1363,7 +1435,7 @@ export default function App() {
             )}
 
             <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '16px' }}>
-              <span style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', fontWeight: '700' }}><Activity size={12} color="var(--accent)" /> Exposure Index Matrix</span>
+              <span style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', fontWeight: '550' }}><Activity size={12} color="var(--accent)" /> Exposure Index Matrix</span>
               <div style={{ width: '100%', backgroundColor: 'var(--border-color)', borderRadius: '99px', height: '6px', overflow: 'hidden' }}>
                 <div style={{ width: `${Math.min(100, (currentRainInt / 500) * 100)}%`, backgroundColor: gaugeColor, height: '100%', transition: 'width 0.4s ease-out' }}></div>
               </div>
@@ -1372,7 +1444,7 @@ export default function App() {
 
           {/* Column 2: Risk Coefficient Gauge */}
           <div className="ios-card ios-glass" style={{ padding: '24px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', alignItems: 'center', textAlign: 'center' }}>
-            <h3 style={{ fontSize: '12px', fontWeight: '700', margin: '0 0 12px 0', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px', width: '100%' }}><Radio size={14} color="var(--accent)" /> Risk Coefficient</h3>
+            <h3 style={{ fontSize: '12px', fontWeight: '600', margin: '0 0 12px 0', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px', width: '100%' }}><Radio size={14} color="var(--accent)" /> Risk Coefficient</h3>
             <div style={{ position: 'relative', width: '150px', height: '150px', margin: '12px 0' }}>
               <svg width="150" height="150" viewBox="0 0 100 100" style={{ transform: 'rotate(-90deg)' }}>
                 <circle cx="50" cy="50" r="44" fill="transparent" stroke="var(--border-color)" strokeWidth="5.5" />
@@ -1449,29 +1521,10 @@ export default function App() {
         }}
       />
 
-      {/* Phase 8: Emergency Cellular SOS Beacon Modal */}
-      <EmergencySOSModal
-        isOpen={isSOSModalOpen}
-        onClose={() => setIsSOSModalOpen(false)}
-        user={user}
-        currentCoords={selectedNode}
-        triggerToast={triggerToast}
-      />
-
       {/* Phase 8: Offline Helplines Directory Modal */}
       <EmergencyHelplinesModal
         isOpen={isHelplinesModalOpen}
         onClose={() => setIsHelplinesModalOpen(false)}
-      />
-
-      {/* Family Safety Circle & 1-Tap 'I Am Safe' Modal */}
-      <FamilySafetyModal
-        isOpen={isFamilyModalOpen}
-        onClose={() => setIsFamilyModalOpen(false)}
-        user={user}
-        token={token}
-        currentCoords={selectedNode}
-        triggerToast={triggerToast}
       />
 
       {/* Missing Persons & Rescue Registry Modal */}
@@ -1507,12 +1560,84 @@ export default function App() {
         onOpenHelplines={() => setIsHelplinesModalOpen(true)}
       />
 
+      {/* System Location Permission Settings Pop-Up Dialog */}
+      {showLocationPermissionPrompt && (
+        <div className="auth-modal-backdrop" onClick={() => setShowLocationPermissionPrompt(false)} style={{ zIndex: 14000 }}>
+          <div className="system-loc-popup-card ios-glass" onClick={(e) => e.stopPropagation()}>
+            <div className="system-loc-popup-header">
+              <div className="system-loc-icon-bubble">
+                <MapPin size={22} color="#38BDF8" />
+              </div>
+              <div style={{ flex: 1 }}>
+                <h3 className="system-loc-title">Enable Location in System Settings</h3>
+                <span className="system-loc-subtitle">Device Geolocation Access Required</span>
+              </div>
+              <button className="auth-close-btn" onClick={() => setShowLocationPermissionPrompt(false)}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <p className="system-loc-desc">
+              TerraRisk AI requires device location permissions to pinpoint your live location on the disaster matrix and calculate safe evacuation routes.
+            </p>
+
+            <div className="system-loc-steps-box">
+              <div className="system-loc-step-item">
+                <span className="step-num">1</span>
+                <div>
+                  <strong>In your Browser:</strong> Click the <strong>Lock / Permissions 🔒 icon</strong> in your browser address bar and set <strong>Location</strong> to <strong>"Allow"</strong>.
+                </div>
+              </div>
+              <div className="system-loc-step-item">
+                <span className="step-num">2</span>
+                <div>
+                  <strong>In Windows Settings:</strong> Open <strong>Start &rarr; Settings &rarr; Privacy & Security &rarr; Location</strong> and toggle <strong>Location services</strong> ON.
+                </div>
+              </div>
+            </div>
+
+            <div className="system-loc-actions">
+              <button
+                type="button"
+                className="btn-system-loc-dismiss"
+                onClick={() => setShowLocationPermissionPrompt(false)}
+              >
+                Dismiss
+              </button>
+              <button
+                type="button"
+                className="btn-system-loc-retry"
+                onClick={() => {
+                  setShowLocationPermissionPrompt(false);
+                  requestDeviceLocation(true);
+                }}
+              >
+                <RefreshCw size={14} className={isLocatingDevice ? 'spin-anim' : ''} />
+                <span>Try Again</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Auth Modal */}
       <AuthModal
         isOpen={isAuthModalOpen}
         onClose={() => setIsAuthModalOpen(false)}
         onAuthSuccess={handleAuthSuccess}
         triggerToast={triggerToast}
+      />
+
+      {/* Mobile Bottom Navigation Quick Actions */}
+      <MobileBottomNav
+        onCheckSafety={handleCheckMyArea}
+        onReportHazard={handleStartReportHazard}
+        onSafeRoute={() => handlePlanEvacuationRoute()}
+        onOpenHelplines={() => setIsHelplinesModalOpen(true)}
+        onOpenMenu={() => setIsSidebarOpen(true)}
+        planningRoute={planningRoute}
+        checkingSafety={checkingSafety}
+        deviceCoords={deviceCoords}
       />
 
       {/* Toast Notification */}

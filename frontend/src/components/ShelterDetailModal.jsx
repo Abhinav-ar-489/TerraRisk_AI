@@ -74,7 +74,7 @@ export default function ShelterDetailModal({
           </div>
           {shelter.distance_km !== undefined && (
             <div className="shelter-meta-box">
-              <span className="shelter-meta-label"><Navigation size={11} color="var(--accent)" /> Distance from Home</span>
+              <span className="shelter-meta-label"><Navigation size={11} color="var(--accent)" /> Distance</span>
               <span className="shelter-meta-val">~{shelter.distance_km} km</span>
             </div>
           )}

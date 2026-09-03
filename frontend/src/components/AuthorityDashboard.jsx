@@ -236,17 +236,20 @@ export default function AuthorityDashboard({
     }
   };
 
-  const pendingCount = clusters.filter(c => c.status === 'pending').length;
-  const verifiedCount = clusters.filter(c => c.status === 'verified').length;
-  const allCount = clusters.length;
+  const safeClusters = Array.isArray(clusters) ? clusters : [];
+  const safeShelters = Array.isArray(shelters) ? shelters : [];
 
-  const filteredClusters = clusters.filter(c => {
+  const pendingCount = safeClusters.filter(c => c.status === 'pending').length;
+  const verifiedCount = safeClusters.filter(c => c.status === 'verified').length;
+  const allCount = safeClusters.length;
+
+  const filteredClusters = safeClusters.filter(c => {
     const matchesStatus = statusFilter === 'all' || c.status === statusFilter;
     const matchesHazard = filterType === 'all' || c.primary_hazard_type === filterType;
     return matchesStatus && matchesHazard;
   });
 
-  const filteredShelters = shelters.filter(s => {
+  const filteredShelters = safeShelters.filter(s => {
     const matchesDistrict = campDistrictFilter === 'all' || s.district?.toLowerCase() === campDistrictFilter.toLowerCase();
     const matchesSearch = !campSearch || s.name.toLowerCase().includes(campSearch.toLowerCase()) || s.district?.toLowerCase().includes(campSearch.toLowerCase());
     return matchesDistrict && matchesSearch;

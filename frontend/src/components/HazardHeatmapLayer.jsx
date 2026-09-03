@@ -7,7 +7,7 @@ export default function HazardHeatmapLayer({ points = [], isVisible = false, opa
   const map = useMap();
 
   useEffect(() => {
-    if (!map || !isVisible || !points || points.length === 0) return;
+    if (!map || !isVisible || !Array.isArray(points) || points.length === 0) return;
 
     // Filter valid [lat, lng, intensity] tuples
     const validPoints = points.filter(p => Array.isArray(p) && p.length >= 2 && !isNaN(p[0]) && !isNaN(p[1]));

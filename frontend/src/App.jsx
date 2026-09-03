@@ -172,7 +172,58 @@ const createHotspotIcon = () => {
   });
 };
 
+const DEFAULT_HOTSPOTS = [
+  { name: "Chooralmala", lat: 11.5361, lng: 76.1667, desc: "2024 Debris Flow epicenter", risk_score: 95 },
+  { name: "Mundakkai", lat: 11.5167, lng: 76.1500, desc: "2024 Mass Wasting catastrophe", risk_score: 95 },
+  { name: "Puthumala", lat: 11.5583, lng: 76.1308, desc: "2019 Hill-collapse zone", risk_score: 90 },
+  { name: "Kavalappara", lat: 11.3622, lng: 76.2411, desc: "2019 Debris avalanche site", risk_score: 85 },
+  { name: "Pettimudi", lat: 10.1683, lng: 77.0183, desc: "2020 Rajamala slide zone", risk_score: 88 },
+  { name: "Meppadi", lat: 11.5500, lng: 76.1250, desc: "Critical Vulnerability Corridor", risk_score: 80 },
+  { name: "Vythiri", lat: 11.5542, lng: 76.0422, desc: "High Precipitation Scarp", risk_score: 82 },
+  { name: "Munnar Gap Road", lat: 10.0514, lng: 77.0988, desc: "Active Rockfall/Slump Sector", risk_score: 78 }
+];
 
+const DEFAULT_SHELTERS = [
+  {
+    id: 1,
+    name: "Meppadi Community Relief Centre",
+    lat: 11.5512,
+    lng: 76.1285,
+    capacity: 450,
+    occupied: 120,
+    contact_number: "+914936280300",
+    district: "Wayanad",
+    status: "active",
+    in_charge_name: "Rahul M. (Revenue Officer)",
+    in_charge_phone: "+919447112233"
+  },
+  {
+    id: 2,
+    name: "Nilambur Govt Higher Secondary Camp",
+    lat: 11.2770,
+    lng: 76.2240,
+    capacity: 500,
+    occupied: 95,
+    contact_number: "+914831220456",
+    district: "Malappuram",
+    status: "active",
+    in_charge_name: "Muhammed Faisal (Panchayat Sec.)",
+    in_charge_phone: "+919446889900"
+  },
+  {
+    id: 3,
+    name: "Kozhikode Medical College Relief Camp",
+    lat: 11.2725,
+    lng: 75.8360,
+    capacity: 700,
+    occupied: 150,
+    contact_number: "+914952350212",
+    district: "Kozhikode",
+    status: "active",
+    in_charge_name: "Dr. K. Narayanan (Superintendent)",
+    in_charge_phone: "+919447445566"
+  }
+];
 
 const createGPSLocationMarkerIcon = () => {
   return L.divIcon({
@@ -316,7 +367,7 @@ export default function App() {
   const [showHotspots, setShowHotspots] = useState(!isAuthorityUser);
   const [showIncidents, setShowIncidents] = useState(!isAuthorityUser);
   const [showTelemetryNodes, setShowTelemetryNodes] = useState(false);
-  const [hotspots, setHotspots] = useState([]);
+  const [hotspots, setHotspots] = useState(DEFAULT_HOTSPOTS);
   const [incidents, setIncidents] = useState([]);
   const [rainfall, setRainfall] = useState(150);
   const [saturation, setSaturation] = useState(60);
@@ -349,7 +400,7 @@ export default function App() {
   const [showHeatmap, setShowHeatmap] = useState(!isAuthorityUser);
 
   // Phase 7 Safe Evacuation Route Planner & Relief Directory State
-  const [shelters, setShelters] = useState([]);
+  const [shelters, setShelters] = useState(DEFAULT_SHELTERS);
   const [showShelters, setShowShelters] = useState(!isAuthorityUser);
   const [activeRoutePlan, setActiveRoutePlan] = useState(null);
   const [planningRoute, setPlanningRoute] = useState(false);
@@ -504,28 +555,33 @@ export default function App() {
 
   // Filtered Datasets: Only show hazards, shelters, and hotspots relevant to user when in 'local' scope
   const displayedIncidents = useMemo(() => {
-    if (proximityScope === 'state' || !userFocusCoords) return incidents;
-    return incidents.filter(inc => getHaversineDistanceKm(userFocusCoords.lat, userFocusCoords.lng, inc.lat, inc.lng) <= 30.0);
+    const list = Array.isArray(incidents) ? incidents : [];
+    if (proximityScope === 'state' || !userFocusCoords) return list;
+    return list.filter(inc => inc && !isNaN(inc.lat) && !isNaN(inc.lng) && getHaversineDistanceKm(userFocusCoords.lat, userFocusCoords.lng, inc.lat, inc.lng) <= 30.0);
   }, [incidents, proximityScope, userFocusCoords]);
 
   const displayedShelters = useMemo(() => {
-    if (proximityScope === 'state' || !userFocusCoords) return shelters;
-    return shelters.filter(s => getHaversineDistanceKm(userFocusCoords.lat, userFocusCoords.lng, s.lat, s.lng) <= 35.0);
+    const list = Array.isArray(shelters) ? shelters : [];
+    if (proximityScope === 'state' || !userFocusCoords) return list;
+    return list.filter(s => s && !isNaN(s.lat) && !isNaN(s.lng) && getHaversineDistanceKm(userFocusCoords.lat, userFocusCoords.lng, s.lat, s.lng) <= 35.0);
   }, [shelters, proximityScope, userFocusCoords]);
 
   const displayedHotspots = useMemo(() => {
-    if (proximityScope === 'state' || !userFocusCoords) return hotspots;
-    return hotspots.filter(h => getHaversineDistanceKm(userFocusCoords.lat, userFocusCoords.lng, h.lat, h.lng) <= 30.0);
+    const list = Array.isArray(hotspots) ? hotspots : [];
+    if (proximityScope === 'state' || !userFocusCoords) return list;
+    return list.filter(h => h && !isNaN(h.lat) && !isNaN(h.lng) && getHaversineDistanceKm(userFocusCoords.lat, userFocusCoords.lng, h.lat, h.lng) <= 30.0);
   }, [hotspots, proximityScope, userFocusCoords]);
 
   // Dynamic Real-Time Landslide & Hazard Heatmap Kernel Density Points
   const heatmapPoints = useMemo(() => {
     const pts = [];
     const localRadius = proximityScope === 'local' ? 35.0 : 9999.0;
+    const listInc = Array.isArray(incidents) ? incidents : [];
+    const listHot = Array.isArray(hotspots) ? hotspots : [];
 
     // 1. Live Incidents & Clustered Reports
-    incidents.forEach(inc => {
-      if (getHaversineDistanceKm(userFocusCoords.lat, userFocusCoords.lng, inc.lat, inc.lng) <= localRadius) {
+    listInc.forEach(inc => {
+      if (inc && !isNaN(inc.lat) && !isNaN(inc.lng) && userFocusCoords && getHaversineDistanceKm(userFocusCoords.lat, userFocusCoords.lng, inc.lat, inc.lng) <= localRadius) {
         const weight = Math.min(1.0, Math.max(0.3, (inc.avg_severity || 3) / 5.0));
         pts.push([inc.lat, inc.lng, weight]);
       }
@@ -533,14 +589,14 @@ export default function App() {
     // 2. High-Risk Steep Western Ghats Escarpments (>22°) Scaled by Live Rainfall & Saturation
     const rainFactor = Math.min(1.0, Math.max(0.15, (rainfall / 260.0) * (saturation / 80.0)));
     KERALA_NODES.filter(n => n.slope >= 22).forEach(n => {
-      if (getHaversineDistanceKm(userFocusCoords.lat, userFocusCoords.lng, n.lat, n.lng) <= localRadius) {
+      if (userFocusCoords && getHaversineDistanceKm(userFocusCoords.lat, userFocusCoords.lng, n.lat, n.lng) <= localRadius) {
         const slopeWeight = Math.min(1.0, (n.slope / 45.0) * rainFactor);
         pts.push([n.lat, n.lng, slopeWeight]);
       }
     });
     // 3. Historic Landslide Inventory Hotspots
-    hotspots.forEach(h => {
-      if (getHaversineDistanceKm(userFocusCoords.lat, userFocusCoords.lng, h.lat, h.lng) <= localRadius) {
+    listHot.forEach(h => {
+      if (h && !isNaN(h.lat) && !isNaN(h.lng) && userFocusCoords && getHaversineDistanceKm(userFocusCoords.lat, userFocusCoords.lng, h.lat, h.lng) <= localRadius) {
         pts.push([h.lat, h.lng, 0.45 * rainFactor]);
       }
     });
@@ -550,7 +606,13 @@ export default function App() {
   // Load hotspots
   useEffect(() => {
     api.get('/api/hotspots')
-      .then(res => setHotspots(res.data))
+      .then(res => {
+        if (Array.isArray(res.data)) {
+          setHotspots(res.data);
+        } else if (res.data && Array.isArray(res.data.hotspots)) {
+          setHotspots(res.data.hotspots);
+        }
+      })
       .catch(() => console.log("System data arrays synced."));
   }, []);
 
@@ -558,7 +620,7 @@ export default function App() {
   const fetchActiveIncidents = () => {
     api.get('/api/incidents/active')
       .then(res => {
-        if (res.data.success) {
+        if (res.data && res.data.success && Array.isArray(res.data.incidents)) {
           setIncidents(res.data.incidents);
         }
       })
@@ -588,7 +650,7 @@ export default function App() {
   const fetchActiveBroadcasts = () => {
     api.get('/api/alerts/active-broadcasts')
       .then(res => {
-        if (res.data.success) {
+        if (res.data && res.data.success && Array.isArray(res.data.broadcasts)) {
           setActiveBroadcasts(res.data.broadcasts);
         }
       })
@@ -599,7 +661,7 @@ export default function App() {
   const fetchShelters = () => {
     api.get('/api/shelters')
       .then(res => {
-        if (res.data.success) {
+        if (res.data && res.data.success && Array.isArray(res.data.shelters)) {
           setShelters(res.data.shelters);
         }
       })

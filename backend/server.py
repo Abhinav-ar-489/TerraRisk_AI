@@ -68,7 +68,8 @@ try:
         create_volunteer_mission,
         get_volunteer_missions,
         update_volunteer_mission_status,
-        get_authority_metrics
+        get_authority_metrics,
+        get_database_info
     )
     from alerts import (
         synthesize_bilingual_alert,
@@ -124,7 +125,8 @@ except ImportError:
         create_volunteer_mission,
         get_volunteer_missions,
         update_volunteer_mission_status,
-        get_authority_metrics
+        get_authority_metrics,
+        get_database_info
     )
     from backend.alerts import (
         synthesize_bilingual_alert,
@@ -1788,30 +1790,17 @@ def export_situation_report(current_user):
 @app.route('/api/health', methods=['GET'])
 def get_system_health():
     try:
-        conn = get_db_connection()
-        c = conn.cursor()
-        users_count = c.execute("SELECT COUNT(*) AS c FROM users;").fetchone()["c"]
-        incidents_count = c.execute("SELECT COUNT(*) AS c FROM incident_reports;").fetchone()["c"]
-        shelters_count = c.execute("SELECT COUNT(*) AS c FROM relief_shelters;").fetchone()["c"]
-        missing_count = c.execute("SELECT COUNT(*) AS c FROM missing_persons;").fetchone()["c"]
-        audit_count = c.execute("SELECT COUNT(*) AS c FROM audit_logs;").fetchone()["c"]
-        conn.close()
-        
+        db_info = get_database_info()
+        is_healthy = db_info.get("connected", False)
         return jsonify({
-            "status": "healthy",
+            "status": "healthy" if is_healthy else "degraded",
             "models": {
                 "classifier_loaded": ai_brain is not None,
                 "regressor_loaded": rain_brain is not None,
                 "vision_engine": "active"
             },
-            "database": {
-                "users": users_count,
-                "incident_reports": incidents_count,
-                "relief_shelters": shelters_count,
-                "missing_persons": missing_count,
-                "audit_logs": audit_count
-            }
-        })
+            "database": db_info
+        }), (200 if is_healthy else 500)
     except Exception as err:
         return jsonify({"status": "degraded", "error": str(err)}), 500
 

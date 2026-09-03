@@ -7519,39 +7519,79 @@ body::-webkit-scrollbar,
 /* ==========================================================================
    📱 MOBILE RESPONSIVE ENGINE (Screens <= 768px)
    ========================================================================== */
+/* ==========================================================================
+   📱 MODERN MOBILE RESPONSIVE ENGINE (Screens <= 768px)
+   ========================================================================== */
 @media (max-width: 768px) {
-  /* Safe Area Insets for Modern Edge-to-Edge Devices */
+  /* Edge-to-Edge Safe Insets */
   body {
     padding-top: env(safe-area-inset-top, 0px);
     -webkit-tap-highlight-color: transparent;
   }
 
+  .app-main-viewport-frame {
+    padding-bottom: calc(76px + env(safe-area-inset-bottom, 0px)) !important;
+    box-sizing: border-box !important;
+  }
+
+  /* Main Container - Flex column reordering to place MAP at the top */
   .app-container {
-    padding-left: 12px !important;
-    padding-right: 12px !important;
-    /* Bottom padding clearance so content is never covered by bottom nav */
-    padding-bottom: calc(84px + env(safe-area-inset-bottom, 0px)) !important;
+    display: flex !important;
+    flex-direction: column !important;
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+    padding-top: 4px !important;
+    padding-bottom: 24px !important;
     max-width: 100% !important;
     box-sizing: border-box !important;
   }
 
-  /* 1. Compact Minimalist Header */
+  /* 1. Natural Mobile Hierarchy */
+  .offline-mode-indicator-strip { order: 1 !important; margin-bottom: 8px !important; }
+  .public-broadcast-banner { order: 2 !important; margin-bottom: 10px !important; }
+  .citizen-safety-banner-wrapper { order: 3 !important; margin-bottom: 10px !important; }
+  .map-outer-wrapper { order: 4 !important; margin-bottom: 12px !important; }
+  .weather-hud-strip-wrapper { order: 5 !important; margin-bottom: 12px !important; }
+  .ios-dashboard-grid { order: 6 !important; }
+
+  /* 2. Ultra-Clean Sticky Minimalist Header */
   .minimalist-header {
-    width: calc(100% - 16px) !important;
-    margin: 8px auto 12px auto !important;
-    padding: 8px 12px !important;
-    gap: 8px !important;
-    border-radius: 16px !important;
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 9998 !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 6px 10px !important;
+    height: 48px !important;
+    min-height: 48px !important;
+    border-radius: 0 0 16px 16px !important;
+    display: flex !important;
+    justify-content: space-between !important;
+    align-items: center !important;
+    box-sizing: border-box !important;
+    background: rgba(15, 23, 42, 0.88) !important;
+    backdrop-filter: blur(24px) saturate(200%) !important;
+    -webkit-backdrop-filter: blur(24px) saturate(200%) !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25) !important;
   }
 
   .header-left-cluster {
+    display: flex !important;
+    align-items: center !important;
     gap: 8px !important;
   }
 
   .btn-menu-drawer-toggle {
-    height: 36px !important;
-    padding: 0 10px !important;
+    width: 34px !important;
+    height: 34px !important;
+    padding: 0 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
     border-radius: 10px !important;
+    background: rgba(255, 255, 255, 0.06) !important;
+    border: 1px solid var(--border-color) !important;
   }
 
   .btn-menu-label {
@@ -7560,6 +7600,9 @@ body::-webkit-scrollbar,
 
   .header-brand-title {
     font-size: 13.5px !important;
+    letter-spacing: 0.3px !important;
+    margin: 0 !important;
+    font-weight: 800 !important;
   }
 
   .header-brand-subtitle {
@@ -7567,133 +7610,180 @@ body::-webkit-scrollbar,
   }
 
   .header-right-cluster {
+    display: flex !important;
+    align-items: center !important;
     gap: 6px !important;
   }
 
-  .header-location-btn {
-    height: 36px !important;
-    width: 36px !important;
-    padding: 0 !important;
-    display: inline-flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    border-radius: 10px !important;
-  }
-
-  .header-loc-text {
-    display: none !important;
-  }
-
+  /* Hide redundant header clutter on mobile */
+  .header-location-btn,
   .header-status-pill {
-    padding: 6px 8px !important;
-  }
-
-  .status-indicator-text {
     display: none !important;
   }
 
   .header-user-badge-minimal {
-    padding: 4px 8px 4px 4px !important;
-    border-radius: 10px !important;
+    padding: 2px 8px 2px 2px !important;
+    border-radius: 20px !important;
+    height: 32px !important;
+    background: rgba(255, 255, 255, 0.08) !important;
+    border: 1px solid var(--border-color) !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 4px !important;
   }
 
-  .user-role-tag {
-    display: none !important;
+  .user-mini-avatar {
+    width: 26px !important;
+    height: 26px !important;
+    font-size: 11px !important;
+    font-weight: 700 !important;
   }
 
   .user-minimal-name {
     font-size: 11px !important;
+    font-weight: 600 !important;
     max-width: 60px !important;
     overflow: hidden !important;
     text-overflow: ellipsis !important;
     white-space: nowrap !important;
   }
 
-  .nav-btn-signin {
-    padding: 6px 10px !important;
-    font-size: 11.5px !important;
-  }
-
-  .nav-btn-theme {
-    width: 34px !important;
-    height: 34px !important;
-  }
-
-  /* 2. Atmospheric Forecast Horizontal Swipeable Carousel */
-  .weather-hud-strip-wrapper {
-    padding: 12px 14px !important;
-    border-radius: 18px !important;
-    margin-bottom: 12px !important;
-  }
-
-  .weather-hud-info-header {
-    margin-bottom: 8px !important;
-  }
-
-  .weather-forecast-days-grid {
-    display: flex !important;
-    overflow-x: auto !important;
-    scroll-snap-type: x mandatory !important;
-    -webkit-overflow-scrolling: touch !important;
-    gap: 8px !important;
-    padding: 4px 2px 8px 2px !important;
-    scrollbar-width: none !important;
-  }
-
-  .weather-forecast-days-grid::-webkit-scrollbar {
+  .user-role-tag {
     display: none !important;
   }
 
-  .forecast-day-column-tile {
-    flex: 0 0 100px !important;
-    min-width: 100px !important;
-    scroll-snap-align: start !important;
-    padding: 8px 6px !important;
-    border-radius: 12px !important;
+  .nav-btn-signin {
+    padding: 5px 10px !important;
+    font-size: 11.5px !important;
+    height: 32px !important;
+    border-radius: 10px !important;
   }
 
-  /* 3. Responsive Map Viewport & Controls */
+  .nav-btn-theme {
+    width: 32px !important;
+    height: 32px !important;
+    border-radius: 10px !important;
+    padding: 0 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background: rgba(255, 255, 255, 0.06) !important;
+    border: 1px solid var(--border-color) !important;
+  }
+
+  /* 3. Compact Priority Emergency Broadcast Banner */
+  .public-broadcast-banner {
+    padding: 10px 12px !important;
+    margin: 0 0 10px 0 !important;
+    border-radius: 16px !important;
+    box-shadow: 0 4px 18px rgba(239, 68, 68, 0.22) !important;
+  }
+
+  .public-banner-top-row {
+    margin-bottom: 6px !important;
+  }
+
+  .public-banner-icon-pulse {
+    width: 22px !important;
+    height: 22px !important;
+  }
+
+  .public-banner-tag {
+    font-size: 10px !important;
+    letter-spacing: 0.3px !important;
+  }
+
+  .public-banner-time {
+    display: none !important;
+  }
+
+  .public-banner-text {
+    font-size: 11.5px !important;
+    line-height: 1.35 !important;
+    margin: 0 0 6px 0 !important;
+    display: -webkit-box !important;
+    -webkit-line-clamp: 2 !important;
+    -webkit-box-orient: vertical !important;
+    overflow: hidden !important;
+  }
+
+  .public-banner-footer-row {
+    flex-direction: column !important;
+    gap: 6px !important;
+    align-items: stretch !important;
+    padding-top: 6px !important;
+  }
+
+  .public-banner-footer-row > div:first-child {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 4px !important;
+  }
+
+  .public-banner-coords-pill,
+  .public-banner-dist-pill {
+    font-size: 9.5px !important;
+    padding: 2px 6px !important;
+    border-radius: 6px !important;
+  }
+
+  .public-banner-footer-row > div:last-child {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 6px !important;
+    width: 100% !important;
+  }
+
+  .public-banner-action-btn {
+    padding: 6px 8px !important;
+    font-size: 10.5px !important;
+    justify-content: center !important;
+    border-radius: 8px !important;
+  }
+
+  /* 4. Interactive Map Hero Viewport & Floating HUD Controls */
   .map-outer-wrapper {
-    height: clamp(380px, calc(100svh - 280px), 480px) !important;
-    border-radius: 18px !important;
-    margin-bottom: 14px !important;
+    height: clamp(340px, 48vh, 440px) !important;
+    margin: 0 0 10px 0 !important;
+    border-radius: 20px !important;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.28) !important;
+    position: relative !important;
   }
 
+  /* Eliminate clumsy Leaflet zoom buttons on touch viewports */
+  .leaflet-control-zoom {
+    display: none !important;
+  }
+
+  /* Top-Left: Proximity Scope Capsule */
   .proximity-scope-bar-wrapper {
     top: 8px !important;
-    left: 50% !important;
-    transform: translateX(-50%) !important;
+    left: 8px !important;
+    right: auto !important;
+    transform: none !important;
     width: auto !important;
-    max-width: calc(100% - 24px) !important;
-    z-index: 999 !important;
-  }
-
-  .proximity-scope-capsule {
-    padding: 3px !important;
-  }
-
-  .scope-pill-btn {
-    padding: 5px 10px !important;
-    font-size: 11px !important;
-  }
-
-  .map-gps-fab-container {
-    bottom: 14px !important;
-    right: 12px !important;
+    max-width: calc(100% - 105px) !important;
     z-index: 1000 !important;
   }
 
-  .map-gps-fab {
-    padding: 8px 12px !important;
-    border-radius: 12px !important;
-    font-size: 11px !important;
+  .proximity-scope-capsule {
+    padding: 2px !important;
+    gap: 2px !important;
+    border-radius: 20px !important;
+    background: rgba(15, 23, 42, 0.85) !important;
+    backdrop-filter: blur(16px) !important;
+    border: 1px solid rgba(255, 255, 255, 0.15) !important;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3) !important;
   }
 
-  .gps-fab-label {
-    font-size: 11px !important;
+  .scope-pill-btn {
+    padding: 4px 8px !important;
+    font-size: 10px !important;
+    gap: 3px !important;
+    border-radius: 16px !important;
   }
 
-  /* GIS Layers Collapsible Mobile Bottom Sheet */
+  /* Top-Right: GIS Map Layers Trigger */
   .gis-layers-control-container {
     top: 8px !important;
     right: 8px !important;
@@ -7701,16 +7791,53 @@ body::-webkit-scrollbar,
   }
 
   .gis-layers-trigger-btn {
-    padding: 6px 10px !important;
+    padding: 5px 9px !important;
     font-size: 10.5px !important;
-    border-radius: 10px !important;
+    border-radius: 16px !important;
+    background: rgba(15, 23, 42, 0.85) !important;
+    backdrop-filter: blur(16px) !important;
+    border: 1px solid rgba(255, 255, 255, 0.15) !important;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3) !important;
   }
 
+  /* Bottom-Right: GPS Locate Floating Action Button */
+  .map-gps-fab-container {
+    bottom: 10px !important;
+    right: 10px !important;
+    z-index: 1000 !important;
+  }
+
+  .map-gps-fab {
+    height: 38px !important;
+    padding: 0 11px !important;
+    border-radius: 19px !important;
+    font-size: 10.5px !important;
+    background: rgba(15, 23, 42, 0.88) !important;
+    backdrop-filter: blur(16px) !important;
+    border: 1px solid rgba(56, 189, 248, 0.4) !important;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4) !important;
+  }
+
+  .gps-fab-label {
+    font-size: 10.5px !important;
+  }
+
+  /* Bottom-Left: Minimalist Terrain Legend */
+  .terrain-slope-legend {
+    bottom: 10px !important;
+    left: 8px !important;
+    padding: 3px 6px !important;
+    border-radius: 8px !important;
+    font-size: 8.5px !important;
+    max-width: 120px !important;
+  }
+
+  /* GIS Layers Collapsible Mobile Bottom Sheet */
   .gis-layers-mobile-backdrop {
     display: block !important;
     position: fixed !important;
     inset: 0 !important;
-    background: rgba(0, 0, 0, 0.55) !important;
+    background: rgba(0, 0, 0, 0.6) !important;
     backdrop-filter: blur(4px) !important;
     -webkit-backdrop-filter: blur(4px) !important;
     z-index: 11999 !important;
@@ -7729,7 +7856,7 @@ body::-webkit-scrollbar,
     overflow-y: auto !important;
     -webkit-overflow-scrolling: touch !important;
     z-index: 12000 !important;
-    padding: 18px 18px calc(24px + env(safe-area-inset-bottom, 0px)) 18px !important;
+    padding: 16px 16px calc(24px + env(safe-area-inset-bottom, 0px)) 16px !important;
     box-sizing: border-box !important;
     animation: slide-up-sheet 0.25s cubic-bezier(0.16, 1, 0.3, 1) !important;
   }
@@ -7738,6 +7865,7 @@ body::-webkit-scrollbar,
     display: flex !important;
     align-items: center !important;
     justify-content: space-between !important;
+    margin-bottom: 8px !important;
   }
 
   .gis-layers-close-btn {
@@ -7753,34 +7881,122 @@ body::-webkit-scrollbar,
     cursor: pointer !important;
   }
 
-  /* 4. Dashboard 3-Column Grid Collapse to 1-Column */
+  /* 5. Sleek Atmospheric Forecast Carousel (Placed Below Map) */
+  .weather-hud-strip-wrapper {
+    margin: 0 0 12px 0 !important;
+    padding: 10px 12px !important;
+    border-radius: 16px !important;
+    background: var(--card-bg) !important;
+    box-sizing: border-box !important;
+  }
+
+  .weather-hud-info-header {
+    display: flex !important;
+    justify-content: space-between !important;
+    align-items: center !important;
+    margin-bottom: 6px !important;
+  }
+
+  .weather-hud-badge {
+    font-size: 10px !important;
+    font-weight: 700 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.4px !important;
+    color: var(--accent) !important;
+  }
+
+  .weather-location-text {
+    font-size: 10px !important;
+    color: var(--text-secondary) !important;
+  }
+
+  .weather-forecast-days-grid {
+    display: flex !important;
+    overflow-x: auto !important;
+    scroll-snap-type: x mandatory !important;
+    -webkit-overflow-scrolling: touch !important;
+    gap: 6px !important;
+    padding: 2px 2px 6px 2px !important;
+    scrollbar-width: none !important;
+  }
+
+  .weather-forecast-days-grid::-webkit-scrollbar {
+    display: none !important;
+  }
+
+  .forecast-day-column-tile {
+    flex: 0 0 84px !important;
+    min-width: 84px !important;
+    scroll-snap-align: start !important;
+    padding: 8px 4px !important;
+    border-radius: 12px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    gap: 2px !important;
+  }
+
+  .forecast-day-name {
+    font-size: 10px !important;
+    font-weight: 700 !important;
+  }
+
+  .forecast-icon-frame {
+    height: 22px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
+
+  .forecast-temp-val {
+    font-size: 12.5px !important;
+    font-weight: 800 !important;
+  }
+
+  .forecast-desc-text {
+    font-size: 8.5px !important;
+    color: var(--text-secondary) !important;
+    text-align: center !important;
+    max-width: 76px !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+  }
+
+  .forecast-humidity-text {
+    font-size: 8px !important;
+    color: #38BDF8 !important;
+  }
+
+  /* 6. Dashboard Telemetry & Risk Grid (1 Column) */
   .ios-dashboard-grid {
     grid-template-columns: 1fr !important;
-    gap: 14px !important;
+    gap: 12px !important;
+    width: 100% !important;
   }
 
   .ios-card {
-    padding: 16px !important;
-    border-radius: 18px !important;
+    padding: 14px !important;
+    border-radius: 16px !important;
   }
 
-  /* 5. Fixed Mobile Bottom Action Bar */
+  /* 7. Bespoke iOS Emergency Bottom Navigation Bar */
   .mobile-bottom-nav {
     display: flex !important;
     position: fixed !important;
     bottom: 0 !important;
     left: 0 !important;
     right: 0 !important;
-    height: 60px !important;
-    background: var(--glass-bg) !important;
-    backdrop-filter: blur(24px) saturate(200%) !important;
-    -webkit-backdrop-filter: blur(24px) saturate(200%) !important;
-    border-top: 1px solid var(--border-color) !important;
+    height: 58px !important;
+    background: rgba(15, 23, 42, 0.88) !important;
+    backdrop-filter: blur(28px) saturate(220%) !important;
+    -webkit-backdrop-filter: blur(28px) saturate(220%) !important;
+    border-top: 1px solid rgba(255, 255, 255, 0.12) !important;
     z-index: 9999 !important;
     justify-content: space-around !important;
     align-items: center !important;
     padding: 4px 6px calc(6px + env(safe-area-inset-bottom, 0px)) 6px !important;
-    box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.18) !important;
+    box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.35) !important;
   }
 
   .mob-nav-btn {
@@ -7788,21 +8004,29 @@ body::-webkit-scrollbar,
     flex-direction: column !important;
     align-items: center !important;
     justify-content: center !important;
-    gap: 3px !important;
+    gap: 2px !important;
     background: transparent !important;
     border: none !important;
-    padding: 4px 6px !important;
+    padding: 4px 0 !important;
     cursor: pointer !important;
     flex: 1 !important;
-    min-height: 48px !important;
-    border-radius: 10px !important;
+    min-height: 44px !important;
+    border-radius: 12px !important;
     transition: all 0.15s ease-out !important;
     user-select: none !important;
   }
 
   .mob-nav-btn:active {
-    transform: scale(0.92) !important;
-    opacity: 0.8 !important;
+    transform: scale(0.9) !important;
+  }
+
+  .mob-nav-btn.active {
+    background: rgba(56, 189, 248, 0.1) !important;
+  }
+
+  .mob-nav-btn.active .mob-nav-label {
+    color: #38BDF8 !important;
+    font-weight: 700 !important;
   }
 
   .mob-nav-icon-wrap {
@@ -7810,11 +8034,12 @@ body::-webkit-scrollbar,
     display: flex !important;
     align-items: center !important;
     justify-content: center !important;
+    height: 22px !important;
   }
 
   .mob-nav-badge-dot {
     position: absolute !important;
-    top: -2px !important;
+    top: -1px !important;
     right: -3px !important;
     width: 6px !important;
     height: 6px !important;
@@ -7824,35 +8049,38 @@ body::-webkit-scrollbar,
   }
 
   .mob-nav-btn-highlight .highlight-wrap {
-    background: linear-gradient(135deg, #EF4444 0%, #DC2626 100%) !important;
-    width: 36px !important;
-    height: 36px !important;
+    background: linear-gradient(135deg, #EF4444 0%, #B91C1C 100%) !important;
+    width: 40px !important;
+    height: 40px !important;
     border-radius: 50% !important;
     display: flex !important;
     align-items: center !important;
     justify-content: center !important;
-    box-shadow: 0 4px 14px rgba(239, 68, 68, 0.45) !important;
-    margin-top: -10px !important;
+    box-shadow: 0 4px 16px rgba(239, 68, 68, 0.55), 0 0 0 2px rgba(255, 255, 255, 0.2) !important;
+    margin-top: -14px !important;
+    transition: transform 0.15s ease !important;
+  }
+
+  .mob-nav-btn-highlight:active .highlight-wrap {
+    transform: scale(0.92) !important;
   }
 
   .mob-nav-label {
-    font-size: 10px !important;
+    font-size: 9.5px !important;
     font-weight: 600 !important;
     color: var(--text-secondary) !important;
     letter-spacing: 0.1px !important;
     line-height: 1 !important;
-  }
-
-  .mob-nav-btn.active .mob-nav-label {
-    color: var(--accent) !important;
+    margin-top: 1px !important;
   }
 
   .mob-nav-btn-highlight .highlight-label {
     color: #EF4444 !important;
     font-weight: 700 !important;
+    margin-top: 2px !important;
   }
 
-  /* 6. Mobile Bottom Sheet Modals */
+  /* 8. Mobile Bottom Sheet Modals */
   .auth-modal-backdrop,
   .report-hazard-modal-backdrop,
   .emergency-helplines-backdrop,
@@ -7874,11 +8102,11 @@ body::-webkit-scrollbar,
     width: 100% !important;
     max-width: 100% !important;
     border-radius: 24px 24px 0 0 !important;
-    max-height: 90vh !important;
+    max-height: 88vh !important;
     overflow-y: auto !important;
     -webkit-overflow-scrolling: touch !important;
     margin: 0 !important;
-    padding: 16px 18px calc(24px + env(safe-area-inset-bottom, 0px)) 18px !important;
+    padding: 14px 16px calc(24px + env(safe-area-inset-bottom, 0px)) 16px !important;
     box-sizing: border-box !important;
     animation: slide-up-sheet 0.28s cubic-bezier(0.16, 1, 0.3, 1) !important;
   }
@@ -7893,7 +8121,7 @@ body::-webkit-scrollbar,
     margin: 0 auto 12px auto !important;
   }
 
-  /* 7. Input Fields - Prevent iOS Auto Zoom */
+  /* 9. Input Fields - Prevent iOS Auto Zoom */
   .auth-input,
   .auth-otp-input,
   input[type="text"],
@@ -7906,7 +8134,7 @@ body::-webkit-scrollbar,
     font-size: 16px !important;
   }
 
-  /* 8. Left Command Drawer on Mobile */
+  /* 10. Left Command Drawer on Mobile */
   .left-sidebar-drawer {
     width: min(88vw, 340px) !important;
   }
@@ -7916,15 +8144,16 @@ body::-webkit-scrollbar,
    📱 ULTRA-COMPACT MOBILE ENGINE (Screens <= 480px)
    ========================================================================== */
 @media (max-width: 480px) {
-  .app-container {
-    padding-left: 8px !important;
-    padding-right: 8px !important;
+  .app-main-viewport-frame {
+    padding-left: 6px !important;
+    padding-right: 6px !important;
   }
 
   .minimalist-header {
-    width: 100% !important;
-    border-radius: 12px !important;
-    padding: 6px 10px !important;
+    margin: 2px 0 6px 0 !important;
+    padding: 4px 8px !important;
+    height: 44px !important;
+    min-height: 44px !important;
   }
 
   .header-brand-title {
@@ -7932,14 +8161,14 @@ body::-webkit-scrollbar,
   }
 
   .map-outer-wrapper {
-    height: 360px !important;
-    border-radius: 14px !important;
+    height: clamp(320px, 46vh, 400px) !important;
+    border-radius: 16px !important;
   }
 
   .auth-modal-content,
   .report-hazard-modal-card,
   .emergency-helplines-card {
-    padding: 14px 14px calc(20px + env(safe-area-inset-bottom, 0px)) 14px !important;
+    padding: 12px 14px calc(20px + env(safe-area-inset-bottom, 0px)) 14px !important;
   }
 
   .safety-metrics-grid {

@@ -196,13 +196,12 @@ def interpret_keyword_response(raw_output: str, reported_hazard: str, default_en
 
 
 def _query_gemini_vision(img_bytes: bytes, reported_hazard: str, api_key: str) -> Optional[Dict[str, Any]]:
-    """Query Google Gemini Multimodal Vision API directly with rigorous anti-false-positive instructions."""
+    """Query Google Gemini Multimodal Vision API directly with adversarial skeptical instructions."""
     gemini_models = [
-        "gemini-flash-latest",
-        "gemini-flash-lite-latest",
-        "gemini-2.5-flash",
         "gemini-3.7-flash",
-        "gemini-3.6-flash"
+        "gemini-3.8-flash",
+        "gemini-flash-latest",
+        "gemini-flash-lite-latest"
     ]
     img_b64 = base64.b64encode(img_bytes).decode('utf-8')
     
@@ -211,35 +210,33 @@ def _query_gemini_vision(img_bytes: bytes, reported_hazard: str, api_key: str) -
     false_kw = rule["false_keyword"]
     
     system_instruction = (
-        f"You are the Official Kerala Disaster Management (KSDMA) Computer Vision Inference Engine.\n"
-        f"A citizen uploaded this field photo reporting disaster incident type: '{reported_hazard}' ({rule['title']}).\n\n"
-        f"TASK:\n"
-        f"Examine the visual evidence carefully to classify whether this is a GENUINE DISASTER HAZARD or a NON-HAZARD / FALSE ALARM.\n\n"
-        f"RIGOROUS CLASSIFICATION RULES:\n"
-        f"1. MUST BE CLASSIFIED AS FALSE / NON-HAZARD:\n"
-        f"   - Indoor scenes (rooms, desks, laptops, monitors, office, furniture, ceilings, walls, beds, kitchens)\n"
-        f"   - People, faces, selfies, group portraits, animals, pets, food, personal belongings, vehicles\n"
-        f"   - Digital screenshots, charts, graphics, drawings, memes, icons, text documents\n"
-        f"   - Pristine, clear paved roads with intact lane markings and unobstructed transit lanes\n"
-        f"   - Ordinary minor municipal wear (small isolated pothole, minor sidewalk crack, ordinary rain puddle) that are NOT KSDMA catastrophic mass wasting / flash flood emergencies\n"
-        f"   - Normal green gardens, lawns, trees, calm lakes or skies without disaster displacement\n\n"
-        f"2. MUST BE CLASSIFIED AS TRUE / GENUINE HAZARD ONLY WHEN REAL EVIDENCE IS VISIBLE:\n"
-        f"   - Ground tensile fissures, deep soil fractures, open earth rupture on hillside or road (mud_crack)\n"
-        f"   - Fallen boulders, shattered stone debris, scree tumble across roadway or slope (rockfall)\n"
-        f"   - Turbid torrential floodwaters, overflowing riverbanks, inundated culverts or road (stream_overflow)\n"
-        f"   - Highway obstructed by mudslide, fallen trees, rock debris, or pavement collapse (blocked_road)\n"
-        f"   - Active hillside landslide, slope subsidence, mud flow, rotational hill slip (slope_movement)\n\n"
-        f"MANDATORY OUTPUT KEYWORDS:\n"
-        f"- If GENUINE HAZARD: output keyword [{true_kw}] with is_genuine_hazard: true\n"
-        f"- If FALSE / NON-HAZARD / SAFE: output keyword [{false_kw}] with is_genuine_hazard: false\n\n"
+        f"You are the Official Kerala State Disaster Management Authority (KSDMA) Forensic Disaster Vision Engine.\n"
+        f"A citizen submitted this photo claiming category: '{reported_hazard}' ({rule['title']}).\n\n"
+        f"CORE PRINCIPLE — ADVERSARIAL SKEPTICISM (DEFAULT TO REJECTION):\n"
+        f"Treat every incoming image as a NON-HAZARD or FALSE ALARM by default. Do NOT assume the citizen's report is accurate.\n"
+        f"You must ONLY classify this as a genuine hazard if you observe undeniable, catastrophic physical disaster evidence in the frame.\n\n"
+        f"MANDATORY REJECTIONS (MUST classify with is_genuine_hazard: false and keyword [{false_kw}]):\n"
+        f"1. Non-disaster indoor scenes: rooms, walls, desks, laptops, monitors, office spaces, furniture, ceilings, home interiors, food, clothes, items.\n"
+        f"2. People & objects: Selfies, portraits, human faces, pets, animals, vehicles, tools, machinery, construction vehicles.\n"
+        f"3. Graphics & documents: Screenshots, UI diagrams, text documents, paper, drawings, digital artwork, icons, memes.\n"
+        f"4. Safe outdoor scenes: Pristine roads, clear highways with painted lines, normal green lawns, gardens, trees, calm rivers, clouds.\n"
+        f"5. Minor ordinary municipal wear: Small hairline pavement cracks, ordinary potholes, normal rain puddles, expansion joints, normal sidewalk lines.\n"
+        f"6. Ambiguous / Inconclusive / Low Quality: Blurry, dark, low-resolution, or ambiguous photos MUST BE REJECTED as false.\n\n"
+        f"STRICT CRITERIA FOR GENUINE DISASTER HAZARDS (ONLY classify with is_genuine_hazard: true and keyword [{true_kw}]):\n"
+        f"- mud_crack: Deep geological tension fractures, ground rupture, or road split (>10 cm wide) on earth or asphalt.\n"
+        f"- rockfall: Heavy boulder tumble, massive rock debris avalanche, or scree collapse covering slope or transit lanes.\n"
+        f"- stream_overflow: Turbid torrent overflowing riverbanks, submerging roadways, or catastrophic culvert blowout.\n"
+        f"- blocked_road: Roadway completely obstructed and impassable due to landslide mud, fallen boulders, or collapsed hillside.\n"
+        f"- slope_movement: Active mass wasting escarpment, rotational hill slip, hillside subsidence, or mudflow.\n\n"
+        f"MANDATORY OUTPUT FORMAT:\n"
         f"Respond strictly in valid JSON matching this schema:\n"
         f"{{\n"
         f"  \"keyword\": \"{true_kw}\" or \"{false_kw}\",\n"
         f"  \"is_genuine_hazard\": true or false,\n"
-        f"  \"confidence_score\": <float 0.80 to 0.99 for true hazard, 0.02 to 0.25 for false>,\n"
+        f"  \"confidence_score\": <float 0.85 to 0.99 for genuine disaster, 0.02 to 0.20 for non-hazard/rejected>,\n"
         f"  \"detected_hazard\": \"{reported_hazard}\" or \"non_hazard_scene\",\n"
         f"  \"suggested_severity\": <int 1 to 5>,\n"
-        f"  \"ai_summary\": \"<Concise 1-2 sentence geotechnical observation detailing observable evidence or reason for rejection>\"\n"
+        f"  \"ai_summary\": \"<Concise 1-2 sentence forensic observation detailing disaster evidence or specific reason for rejection>\"\n"
         f"}}"
     )
 
@@ -258,8 +255,8 @@ def _query_gemini_vision(img_bytes: bytes, reported_hazard: str, api_key: str) -
             }
         ],
         "generationConfig": {
-            "temperature": 0.1,
-            "maxOutputTokens": 400
+            "temperature": 0.05,
+            "maxOutputTokens": 350
         }
     }
 
@@ -287,7 +284,7 @@ def _query_gemini_vision(img_bytes: bytes, reported_hazard: str, api_key: str) -
 
 
 def _query_openai_or_groq_vision(img_bytes: bytes, reported_hazard: str, api_key: str, is_groq: bool = False) -> Optional[Dict[str, Any]]:
-    """Query OpenAI GPT-4o-mini or Groq Llama-3.2-Vision with strict anti-false-positive instructions."""
+    """Query OpenAI GPT-4o-mini or Groq Llama-3.2-Vision with strict adversarial anti-false-positive instructions."""
     try:
         url = "https://api.groq.com/openai/v1/chat/completions" if is_groq else "https://api.openai.com/v1/chat/completions"
         model_name = "llama-3.2-11b-vision-preview" if is_groq else "gpt-4o-mini"
@@ -301,8 +298,10 @@ def _query_openai_or_groq_vision(img_bytes: bytes, reported_hazard: str, api_key
         }
         
         prompt_text = (
-            f"You are a disaster geotechnical vision classifier for KSDMA. Citizen reported incident: '{reported_hazard}'.\n"
-            f"Strictly classify as FALSE / NON-HAZARD if image is indoor room, office desk, selfie, screenshot, food, vehicle, or pristine road.\n"
+            f"You are a forensic disaster geotechnical vision classifier for KSDMA. "
+            f"Citizen claimed incident: '{reported_hazard}'. Default to FALSE (non-hazard).\n"
+            f"Strictly classify as FALSE if image is an indoor room, desk, selfie, screenshot, vehicle, pristine road, ordinary lawn, or minor wear.\n"
+            f"Only classify as TRUE if there is unmistakable catastrophic mass wasting, landslide, rockfall, road obstruction, or flash flood.\n"
             f"If genuine hazard, output keyword [{rule['true_keyword']}] and is_genuine_hazard: true.\n"
             f"If non-hazard, output keyword [{rule['false_keyword']}] and is_genuine_hazard: false.\n"
             f"Return JSON: {{\"keyword\": string, \"is_genuine_hazard\": bool, \"detected_hazard\": string, \"confidence_score\": float, \"suggested_severity\": int, \"ai_summary\": string}}."
@@ -321,7 +320,7 @@ def _query_openai_or_groq_vision(img_bytes: bytes, reported_hazard: str, api_key
                 }
             ],
             "max_tokens": 250,
-            "temperature": 0.1
+            "temperature": 0.05
         }
         
         resp = requests.post(url, headers=headers, json=payload, timeout=5.0)
@@ -334,15 +333,16 @@ def _query_openai_or_groq_vision(img_bytes: bytes, reported_hazard: str, api_key
 
 
 def _query_ollama_vision(image_b64: str, reported_hazard: str) -> Optional[Dict[str, Any]]:
-    """Attempt zero-shot vision inference against local Ollama vision models with strict instructions."""
+    """Attempt zero-shot vision inference against local Ollama vision models with strict adversarial instructions."""
     model = _get_active_ollama_vision_model()
     if not model:
         return None
         
     rule = INCIDENT_KEYWORD_RULES.get(reported_hazard, INCIDENT_KEYWORD_RULES["mud_crack"])
     system_prompt = (
-        f"You are a geotechnical disaster vision classifier for KSDMA. "
-        f"Strictly classify as FALSE if image shows indoor room, desk, selfie, screenshot, or safe scene. "
+        f"You are a forensic geotechnical disaster vision classifier for KSDMA. "
+        f"Default to FALSE. Strictly classify as FALSE if image is indoor, room, desk, selfie, screenshot, vehicle, or safe scene. "
+        f"Only classify as TRUE if undeniable catastrophic landslide, rockfall, flood, or mud rupture is visible. "
         f"If genuine hazard, output keyword [{rule['true_keyword']}] with is_genuine_hazard: true. "
         f"If non-hazard, output keyword [{rule['false_keyword']}] with is_genuine_hazard: false. "
         f"Return JSON: {{\"keyword\": string, \"is_genuine_hazard\": bool, \"detected_hazard\": string, \"confidence_score\": float, \"suggested_severity\": int, \"ai_summary\": string}}."
@@ -359,7 +359,7 @@ def _query_ollama_vision(image_b64: str, reported_hazard: str) -> Optional[Dict[
                 "images": [image_b64],
                 "stream": False,
                 "format": "json",
-                "options": {"num_predict": 150, "temperature": 0.1}
+                "options": {"num_predict": 150, "temperature": 0.05}
             },
             timeout=4.0
         )
@@ -712,6 +712,7 @@ def _python_geological_feature_engine(img_bytes: bytes, reported_hazard: str) ->
 
         np_arr = np.array(gray_img, dtype=float)
         texture_roughness = float(np.std(np_arr))
+        dark_crevices = float(np.mean(np_arr < 35.0))
 
         # Check geological color signatures
         is_earth_toned = (r_mean >= g_mean * 0.95) and (r_mean > 50 and r_mean < 210) and (b_mean < g_mean)
@@ -723,28 +724,27 @@ def _python_geological_feature_engine(img_bytes: bytes, reported_hazard: str) ->
         summary = rule["status_label_false"]
 
         if reported_hazard == "mud_crack":
-            # Real tensile ground fissures require high edge density on earth-toned or asphalt ground
-            if (is_earth_toned and edge_intensity > 6.0 and texture_roughness > 14.0) or edge_intensity > 18.0:
+            # Real tensile ground fissures require earth/asphalt terrain with edge contrast AND dark open fracture crevices
+            if is_earth_toned and (edge_intensity > 5.8) and (texture_roughness > 13.0) and (dark_crevices > 0.015):
                 is_hazard_confirmed = True
-                confidence = 0.84
-                severity = 4 if edge_intensity > 25.0 else 3
-                summary = f"Visual surface cracks and fissures confirmed on terrain (Edge Intensity: {edge_intensity:.1f})."
+                confidence = 0.88
+                severity = 4 if edge_intensity > 20.0 else 3
+                summary = f"Geotechnical tension fractures and ground crevices confirmed (Edge: {edge_intensity:.1f}, Fissure Density: {dark_crevices*100:.1f}%)."
             else:
-                summary = "Pavement/soil surface does not exhibit prominent tension fissure patterns."
+                summary = "Pavement or soil surface does not exhibit open geological tension fissure fractures."
 
         elif reported_hazard == "rockfall":
-            # Real rockfall requires jagged high texture roughness and angular debris contrast
-            if texture_roughness > 22.0 and edge_intensity > 14.0:
+            is_rock_toned = is_earth_toned or (abs(r_mean - g_mean) < 18 and abs(g_mean - b_mean) < 18 and r_mean < 160)
+            if is_rock_toned and (texture_roughness > 24.0) and (edge_intensity > 16.0) and (dark_crevices > 0.01):
                 is_hazard_confirmed = True
                 confidence = 0.86
                 severity = 4 if edge_intensity > 25.0 else 3
-                summary = f"Loose boulders and shattered stone debris detected on transit corridor (Roughness: {texture_roughness:.1f})."
+                summary = f"Loose rock boulders and shattered debris scatter detected (Roughness: {texture_roughness:.1f})."
             else:
                 summary = "No loose boulders or shattered rock tumble patterns identified."
 
         elif reported_hazard == "stream_overflow":
-            # Real stream overflow requires water chroma and fluid texture
-            if is_water_chroma and edge_intensity > 8.0:
+            if is_water_chroma and (edge_intensity > 8.0) and (texture_roughness > 12.0):
                 is_hazard_confirmed = True
                 confidence = 0.85
                 severity = 4 if edge_intensity > 18.0 else 3
@@ -753,16 +753,17 @@ def _python_geological_feature_engine(img_bytes: bytes, reported_hazard: str) ->
                 summary = "No torrential stream overflow or active floodwater accumulation observed."
 
         elif reported_hazard == "blocked_road":
-            if edge_intensity > 16.0 and texture_roughness > 20.0:
+            asphalt_like = (abs(r_mean - g_mean) < 20 and abs(g_mean - b_mean) < 20 and 40 < r_mean < 170)
+            if (asphalt_like or is_earth_toned) and (edge_intensity > 22.0) and (texture_roughness > 25.0) and (dark_crevices > 0.015):
                 is_hazard_confirmed = True
-                confidence = 0.82
-                severity = 3
-                summary = "Transit route obstruction patterns detected across transit corridor."
+                confidence = 0.83
+                severity = 4
+                summary = "Transit route obstruction and debris mass detected across roadway corridor."
             else:
-                summary = "Roadway appears open with no major landslide debris obstruction."
+                summary = "Roadway corridor appears passable with no major debris obstruction."
 
         elif reported_hazard == "slope_movement":
-            if is_earth_toned and texture_roughness > 18.0 and edge_intensity > 12.0:
+            if is_earth_toned and (texture_roughness > 20.0) and (edge_intensity > 14.0) and (dark_crevices > 0.01):
                 is_hazard_confirmed = True
                 confidence = 0.85
                 severity = 4 if edge_intensity > 22.0 else 3
@@ -777,7 +778,7 @@ def _python_geological_feature_engine(img_bytes: bytes, reported_hazard: str) ->
                 "keyword": false_kw,
                 "status_text": rule["status_label_false"],
                 "detected_hazard": "non_hazard_scene",
-                "confidence_score": 0.12,
+                "confidence_score": 0.10,
                 "suggested_severity": 1,
                 "ai_summary": summary,
                 "is_spam": True,

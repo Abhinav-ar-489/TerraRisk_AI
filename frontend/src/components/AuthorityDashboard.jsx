@@ -256,8 +256,9 @@ export default function AuthorityDashboard({
   });
 
   return (
-    <div className="auth-modal-backdrop" onClick={onClose} style={{ zIndex: 11000 }}>
-      <div className="triage-modal-content ios-glass" onClick={(e) => e.stopPropagation()}>
+    <>
+      <div className="auth-modal-backdrop" onClick={onClose} style={{ zIndex: 11000 }}>
+        <div className="triage-modal-content ios-glass" onClick={(e) => e.stopPropagation()}>
         {/* Top Header */}
         <div className="triage-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -317,14 +318,6 @@ export default function AuthorityDashboard({
               <span className="metric-lbl">Active Missing</span>
               <span className="metric-val" style={{ color: '#EC4899' }}>{metrics.active_missing_persons || 0}</span>
             </div>
-            <div
-              className={`metric-pill clickable ${activeTab === 'missions' ? 'active' : ''}`}
-              onClick={() => setActiveTab('missions')}
-              title="Click to view volunteer missions"
-            >
-              <span className="metric-lbl">Volunteers</span>
-              <span className="metric-val" style={{ color: '#30D158' }}>{metrics.active_field_volunteers}</span>
-            </div>
           </div>
         )}
 
@@ -344,14 +337,6 @@ export default function AuthorityDashboard({
           >
             <Home size={16} />
             <span>Relief Camps & Supplies ({shelters.length})</span>
-          </button>
-
-          <button
-            className={`auth-tab-btn ${activeTab === 'missions' ? 'active' : ''}`}
-            onClick={() => setActiveTab('missions')}
-          >
-            <UserCheck size={16} />
-            <span>Volunteer Missions ({missions.length})</span>
           </button>
 
           <button
@@ -757,35 +742,6 @@ export default function AuthorityDashboard({
           </div>
         )}
 
-        {/* TAB 3: VOLUNTEER MISSIONS */}
-        {activeTab === 'missions' && (
-          <div className="missions-tab-body">
-            <div className="form-section-label">Active Field Inspection Tasks</div>
-            {missions.length === 0 ? (
-              <div className="triage-empty-state">
-                <UserCheck size={32} color="var(--text-tertiary)" />
-                <p style={{ margin: '8px 0 0', fontSize: '13px', color: 'var(--text-secondary)' }}>
-                  No active volunteer field missions dispatched.
-                </p>
-              </div>
-            ) : (
-              <div className="missions-grid">
-                {missions.map(m => (
-                  <div key={m.id} className="mission-card">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <strong style={{ fontSize: '14px', color: 'var(--text-primary)' }}>Mission #{m.id} (Cluster: {m.cluster_id})</strong>
-                      <span className={`status-badge-pill ${m.status}`}>{m.status?.toUpperCase()}</span>
-                    </div>
-                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                      Assigned Volunteer: <strong>{m.volunteer_name || "Unassigned Volunteer"}</strong> ({m.volunteer_phone || "N/A"})
-                    </div>
-                    <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: '6px 0 0' }}>{m.notes}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
 
         {/* TAB 4: SITREP & BROADCAST */}
         {activeTab === 'sitrep' && (
@@ -815,72 +771,73 @@ export default function AuthorityDashboard({
             </div>
           </div>
         )}
-
-        {/* Sub-Modals */}
-        {rejectModalOpen && (
-          <div className="auth-modal-backdrop" style={{ zIndex: 13000 }}>
-            <div className="reject-modal-box ios-glass">
-              <h3 style={{ margin: '0 0 8px', fontSize: '16px', fontWeight: '800', color: 'var(--text-primary)' }}>
-                Reject Incident Cluster
-              </h3>
-              <p style={{ margin: '0 0 12px', fontSize: '12px', color: 'var(--text-secondary)' }}>
-                Rejecting this incident cluster will mark the reports as false alarm or duplicate.
-              </p>
-
-              <select
-                className="auth-input"
-                value={selectedRejectReason}
-                onChange={(e) => setSelectedRejectReason(e.target.value)}
-                style={{ marginBottom: '14px' }}
-              >
-                {REJECTION_REASONS.map(r => (
-                  <option key={r.id} value={r.id}>{r.label}</option>
-                ))}
-              </select>
-
-              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                <button className="btn-secondary" onClick={() => setRejectModalOpen(false)}>Cancel</button>
-                <button className="btn-triage-reject" onClick={handleReject} disabled={actionLoading}>
-                  Confirm Rejection
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {broadcastModalOpen && selectedCluster && (
-          <BroadcastAlertModal
-            isOpen={broadcastModalOpen}
-            onClose={() => setBroadcastModalOpen(false)}
-            cluster={selectedCluster}
-            user={user}
-            token={token || localStorage.getItem('terrarisk_token') || ''}
-            triggerToast={triggerToast}
-          />
-        )}
-
-        {addCampModalOpen && (
-          <AddCampModal
-            isOpen={addCampModalOpen}
-            onClose={() => setAddCampModalOpen(false)}
-            token={token || localStorage.getItem('terrarisk_token') || ''}
-            editingShelter={editingShelter}
-            onCampSaved={() => fetchTriageData()}
-            triggerToast={triggerToast}
-          />
-        )}
-
-        {suppliesModalOpen && selectedSuppliesShelter && (
-          <CampSuppliesModal
-            isOpen={suppliesModalOpen}
-            onClose={() => setSuppliesModalOpen(false)}
-            shelter={selectedSuppliesShelter}
-            token={token || localStorage.getItem('terrarisk_token') || ''}
-            onSuppliesUpdated={() => fetchTriageData()}
-            triggerToast={triggerToast}
-          />
-        )}
       </div>
     </div>
+
+    {/* Sub-Modals */}
+    {rejectModalOpen && (
+      <div className="auth-modal-backdrop" style={{ zIndex: 13000 }}>
+        <div className="reject-modal-box ios-glass">
+          <h3 style={{ margin: '0 0 8px', fontSize: '16px', fontWeight: '800', color: 'var(--text-primary)' }}>
+            Reject Incident Cluster
+          </h3>
+          <p style={{ margin: '0 0 12px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+            Rejecting this incident cluster will mark the reports as false alarm or duplicate.
+          </p>
+
+          <select
+            className="auth-input"
+            value={selectedRejectReason}
+            onChange={(e) => setSelectedRejectReason(e.target.value)}
+            style={{ marginBottom: '14px' }}
+          >
+            {REJECTION_REASONS.map(r => (
+              <option key={r.id} value={r.id}>{r.label}</option>
+            ))}
+          </select>
+
+          <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+            <button className="btn-secondary" onClick={() => setRejectModalOpen(false)}>Cancel</button>
+            <button className="btn-triage-reject" onClick={handleReject} disabled={actionLoading}>
+              Confirm Rejection
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {broadcastModalOpen && selectedCluster && (
+      <BroadcastAlertModal
+        isOpen={broadcastModalOpen}
+        onClose={() => setBroadcastModalOpen(false)}
+        cluster={selectedCluster}
+        user={user}
+        token={token || localStorage.getItem('terrarisk_token') || ''}
+        triggerToast={triggerToast}
+      />
+    )}
+
+    {addCampModalOpen && (
+      <AddCampModal
+        isOpen={addCampModalOpen}
+        onClose={() => setAddCampModalOpen(false)}
+        token={token || localStorage.getItem('terrarisk_token') || ''}
+        editingShelter={editingShelter}
+        onCampSaved={() => fetchTriageData()}
+        triggerToast={triggerToast}
+      />
+    )}
+
+    {suppliesModalOpen && selectedSuppliesShelter && (
+      <CampSuppliesModal
+        isOpen={suppliesModalOpen}
+        onClose={() => setSuppliesModalOpen(false)}
+        shelter={selectedSuppliesShelter}
+        token={token || localStorage.getItem('terrarisk_token') || ''}
+        onSuppliesUpdated={() => fetchTriageData()}
+        triggerToast={triggerToast}
+      />
+    )}
+  </>
   );
 }

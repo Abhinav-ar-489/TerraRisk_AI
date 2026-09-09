@@ -1,11 +1,81 @@
-import { useState } from 'react';
-import { X, Home } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
+import { X, Home, LocateFixed, MapPin, Map, AlertCircle, Loader2 } from 'lucide-react';
+import { MapContainer, TileLayer, Marker, useMapEvents, useMap } from 'react-leaflet';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import api from '../services/api';
 
 const KERALA_DISTRICTS = [
   "Wayanad", "Idukki", "Malappuram", "Kozhikode", "Palakkad",
-  "Pathanamthitta", "Kottayam", "Ernakulam", "Thrissur", "Kannur", "Kasaragod"
+  "Pathanamthitta", "Kottayam", "Ernakulam", "Thrissur", "Kannur",
+  "Kasaragod", "Alappuzha", "Kollam", "Thiruvananthapuram"
 ];
+
+// District centroids for automatic district detection
+const KERALA_DISTRICTS_CENTROIDS = {
+  "Wayanad": { lat: 11.6854, lng: 76.1320 },
+  "Idukki": { lat: 9.9189, lng: 77.1025 },
+  "Malappuram": { lat: 11.0510, lng: 76.0711 },
+  "Kozhikode": { lat: 11.2588, lng: 75.7804 },
+  "Palakkad": { lat: 10.7867, lng: 76.6548 },
+  "Pathanamthitta": { lat: 9.2648, lng: 76.7870 },
+  "Kottayam": { lat: 9.5916, lng: 76.5222 },
+  "Ernakulam": { lat: 9.9816, lng: 76.2999 },
+  "Thrissur": { lat: 10.5276, lng: 76.2144 },
+  "Kannur": { lat: 11.8745, lng: 75.3704 },
+  "Kasaragod": { lat: 12.5102, lng: 74.9852 },
+  "Alappuzha": { lat: 9.4981, lng: 76.3388 },
+  "Kollam": { lat: 8.8932, lng: 76.6141 },
+  "Thiruvananthapuram": { lat: 8.5241, lng: 76.9366 }
+};
+
+function getClosestDistrict(targetLat, targetLng) {
+  let closest = "Wayanad";
+  let minD = Infinity;
+  for (const [name, coord] of Object.entries(KERALA_DISTRICTS_CENTROIDS)) {
+    const dLat = targetLat - coord.lat;
+    const dLng = targetLng - coord.lng;
+    const dist = dLat * dLat + dLng * dLng;
+    if (dist < minD) {
+      minD = dist;
+      closest = name;
+    }
+  }
+  return closest;
+}
+
+// Custom camp pin icon for Leaflet map picker
+const campMapPickerIcon = L.divIcon({
+  className: 'camp-map-picker-pin-wrapper',
+  html: `
+    <div class="camp-picker-pin">
+      <div class="camp-pin-icon-box">⛺</div>
+      <div class="camp-pin-pulse-ring"></div>
+    </div>
+  `,
+  iconSize: [36, 44],
+  iconAnchor: [18, 40]
+});
+
+function LocationPickerMapEvents({ onLocationPicked }) {
+  useMapEvents({
+    click(e) {
+      onLocationPicked(e.latlng.lat, e.latlng.lng);
+    }
+  });
+  return null;
+}
+
+function MapRecenter({ center }) {
+  const map = useMap();
+  useEffect(() => {
+    if (center && !isNaN(center[0]) && !isNaN(center[1])) {
+      map.setView(center, map.getZoom() || 13, { animate: true });
+    }
+  }, [center, map]);
+  return null;
+}
 
 export default function AddCampModal({
   isOpen,
@@ -19,10 +89,13 @@ export default function AddCampModal({
   const [lat, setLat] = useState(String(editingShelter?.lat || '11.5510'));
   const [lng, setLng] = useState(String(editingShelter?.lng || '76.1280'));
   const [capacity, setCapacity] = useState(String(editingShelter?.capacity || '300'));
-  const [contactNumber, setContactNumber] = useState(editingShelter?.contact_number || (editingShelter ? '' : '+91 4936 282220'));
-  const [inChargeName, setInChargeName] = useState(editingShelter?.in_charge_name || '');
-  const [inChargePhone, setInChargePhone] = useState(editingShelter?.in_charge_phone || '');
   const [status] = useState(editingShelter?.status || 'active');
+
+  // Location UI states
+  const [isLocating, setIsLocating] = useState(false);
+  const [showMapPicker, setShowMapPicker] = useState(false);
+  const [gpsAccuracy, setGpsAccuracy] = useState(null);
+  const [locationSource, setLocationSource] = useState(editingShelter ? 'Existing Facility' : 'Default Coordinates');
 
   // Amenities
   const initialAmenities = editingShelter?.amenities || {};
@@ -43,23 +116,76 @@ export default function AddCampModal({
 
   if (!isOpen) return null;
 
+  const applyCoordinates = (newLat, newLng, sourceLabel = 'Map Picked') => {
+    const numLat = parseFloat(newLat);
+    const numLng = parseFloat(newLng);
+    if (!isNaN(numLat) && !isNaN(numLng)) {
+      setLat(numLat.toFixed(5));
+      setLng(numLng.toFixed(5));
+      const detectedDistrict = getClosestDistrict(numLat, numLng);
+      setDistrict(detectedDistrict);
+      setLocationSource(sourceLabel);
+    }
+  };
+
+  const handleUseCurrentLocation = () => {
+    if (!navigator.geolocation) {
+      triggerToast("Geolocation is not supported by your browser.", "error");
+      return;
+    }
+
+    setIsLocating(true);
+    triggerToast("Detecting high-precision device GPS location...", "info");
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setIsLocating(false);
+        const { latitude, longitude, accuracy } = pos.coords;
+        setLat(latitude.toFixed(5));
+        setLng(longitude.toFixed(5));
+        setGpsAccuracy(Math.round(accuracy));
+        const detectedDistrict = getClosestDistrict(latitude, longitude);
+        setDistrict(detectedDistrict);
+        setLocationSource(`Live GPS (±${Math.round(accuracy)}m)`);
+        triggerToast(`✓ Location locked to current GPS: ${latitude.toFixed(4)}°N, ${longitude.toFixed(4)}°E (${detectedDistrict})`, "success");
+      },
+      (err) => {
+        setIsLocating(false);
+        let msg = "Could not detect GPS position.";
+        if (err.code === 1) msg = "Location permission denied. Please pick on the map or enter coordinates.";
+        else if (err.code === 2) msg = "GPS position unavailable. Please pick on the map.";
+        else if (err.code === 3) msg = "GPS request timed out.";
+        triggerToast(msg, "error");
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+  };
+
+  const handleMarkerDragEnd = (e) => {
+    const marker = e.target;
+    if (marker != null) {
+      const position = marker.getLatLng();
+      applyCoordinates(position.lat, position.lng, "Map Pin Dragged");
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!name || !lat || !lng || !capacity || !contactNumber) {
-      triggerToast("Please fill in all mandatory camp details.", "error");
+    if (!name.trim() || !lat || !lng || !capacity) {
+      triggerToast("Please fill in camp name, coordinates, and bed capacity.", "error");
       return;
     }
 
     setLoading(true);
     const payload = {
-      name,
+      name: name.trim(),
       district,
       lat: parseFloat(lat),
       lng: parseFloat(lng),
-      capacity: parseInt(capacity, 10),
-      contact_number: contactNumber,
-      in_charge_name: inChargeName,
-      in_charge_phone: inChargePhone,
+      capacity: parseInt(capacity, 10) || 100,
+      contact_number: "1077", // Official KSDMA Emergency Control Helpline
+      in_charge_name: "",
+      in_charge_phone: "",
       status,
       amenities: {
         medical_post: medicalPost,
@@ -101,45 +227,49 @@ export default function AddCampModal({
     }
   };
 
-  return (
-    <div className="auth-modal-backdrop" onClick={onClose} style={{ zIndex: 12000 }}>
-      <div className="camp-modal-content ios-glass" onClick={(e) => e.stopPropagation()}>
-        {/* Header */}
-        <div className="auth-modal-header">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <div className="auth-header-icon" style={{ background: 'rgba(56, 189, 248, 0.15)', color: '#38BDF8' }}>
-              <Home size={22} />
-            </div>
-            <div>
-              <h2 className="auth-title">{editingShelter ? "Edit Relief Camp" : "Register New Relief Camp"}</h2>
-              <span className="auth-subtitle">KSDMA Designated Evacuation & Aid Facility</span>
-            </div>
-          </div>
-          <button className="auth-close-btn" onClick={onClose}>
-            <X size={18} />
-          </button>
-        </div>
+  const parsedLat = parseFloat(lat) || 11.5510;
+  const parsedLng = parseFloat(lng) || 76.1280;
 
-        {/* Form Body */}
-        <form onSubmit={handleSubmit} className="camp-form-body">
-          {/* 1. Basic Info */}
-          <div className="form-section-label">General Information</div>
-          <div className="form-grid-2">
-            <div className="auth-field">
-              <label className="auth-label">Camp Name *</label>
+  const modalContent = (
+    <div className="auth-modal-backdrop camp-modal-backdrop" onClick={onClose} style={{ zIndex: 12000 }}>
+      <div className="camp-modal-content" onClick={(e) => e.stopPropagation()}>
+        <form onSubmit={handleSubmit} className="camp-modal-form-wrapper">
+          {/* 1. Fixed Header */}
+          <div className="camp-modal-header">
+            <div className="camp-modal-header-left">
+              <div className="camp-header-icon-box">
+                <Home size={20} />
+              </div>
+              <div>
+                <h2 className="camp-modal-title">{editingShelter ? "Edit Relief Camp" : "Register New Relief Camp"}</h2>
+                <span className="camp-modal-subtitle">KSDMA Designated Evacuation & Aid Facility</span>
+              </div>
+            </div>
+            <button type="button" className="camp-close-btn" onClick={onClose} aria-label="Close">
+              <X size={18} />
+            </button>
+          </div>
+
+          {/* 2. Scrollable Body */}
+          <div className="camp-modal-scrollable-body">
+            {/* 1. General Information */}
+            <div className="camp-section-label">General Information</div>
+          <div className="camp-form-row-2">
+            <div className="camp-input-group">
+              <label className="camp-field-label">Camp Name *</label>
               <input
                 type="text"
-                className="auth-input"
+                className="camp-text-input"
                 placeholder="e.g. Meppadi Govt Higher Secondary Camp"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 required
               />
             </div>
-            <div className="auth-field">
-              <label className="auth-label">District *</label>
+            <div className="camp-input-group">
+              <label className="camp-field-label">District *</label>
               <select
-                className="auth-input"
+                className="camp-select-input"
                 value={district}
                 onChange={(e) => setDistrict(e.target.value)}
               >
@@ -150,172 +280,218 @@ export default function AddCampModal({
             </div>
           </div>
 
-          <div className="form-grid-3">
-            <div className="auth-field">
-              <label className="auth-label">Latitude (°N) *</label>
-              <input
-                type="number"
-                step="0.0001"
-                className="auth-input"
-                value={lat}
-                onChange={(e) => setLat(e.target.value)}
-                required
-              />
-            </div>
-            <div className="auth-field">
-              <label className="auth-label">Longitude (°E) *</label>
-              <input
-                type="number"
-                step="0.0001"
-                className="auth-input"
-                value={lng}
-                onChange={(e) => setLng(e.target.value)}
-                required
-              />
-            </div>
-            <div className="auth-field">
-              <label className="auth-label">Bed Capacity *</label>
-              <input
-                type="number"
-                className="auth-input"
-                value={capacity}
-                onChange={(e) => setCapacity(e.target.value)}
-                min="10"
-                max="5000"
-                required
-              />
-            </div>
-          </div>
+          {/* 2. Location & Capacity Card */}
+          <div className="camp-location-card">
+            <div className="camp-location-toolbar">
+              <div className="camp-toolbar-actions">
+                <button
+                  type="button"
+                  className={`camp-location-btn ${isLocating ? 'loading' : ''}`}
+                  onClick={handleUseCurrentLocation}
+                  disabled={isLocating}
+                  title="Detect live GPS coordinates and set as camp site"
+                >
+                  {isLocating ? <Loader2 size={15} className="spin-icon" /> : <LocateFixed size={15} color="#38BDF8" />}
+                  <span>{isLocating ? "Acquiring GPS..." : "Use Current Location"}</span>
+                </button>
 
-          {/* 2. In-Charge & Contacts */}
-          <div className="form-section-label" style={{ marginTop: '12px' }}>Operational Authority & Contacts</div>
-          <div className="form-grid-3">
-            <div className="auth-field">
-              <label className="auth-label">Camp Helpline *</label>
-              <input
-                type="tel"
-                className="auth-input"
-                placeholder="+91 4936 282220"
-                value={contactNumber}
-                onChange={(e) => setContactNumber(e.target.value)}
-                required
-              />
+                <button
+                  type="button"
+                  className={`camp-location-btn ${showMapPicker ? 'active' : ''}`}
+                  onClick={() => setShowMapPicker(!showMapPicker)}
+                  title="Open interactive map to point and pick camp coordinates"
+                >
+                  <Map size={15} color="#30D158" />
+                  <span>{showMapPicker ? "Hide Map Picker" : "Point on Map"}</span>
+                </button>
+              </div>
+
+              <div className="camp-location-status-tag">
+                <MapPin size={13} color="var(--accent)" />
+                <span>{locationSource}: <b>{lat}°N, {lng}°E</b></span>
+                {gpsAccuracy && <span className="accuracy-pill">±{gpsAccuracy}m</span>}
+              </div>
             </div>
-            <div className="auth-field">
-              <label className="auth-label">In-Charge Officer</label>
-              <input
-                type="text"
-                className="auth-input"
-                placeholder="e.g. Rajesh Kumar (Tahsildar)"
-                value={inChargeName}
-                onChange={(e) => setInChargeName(e.target.value)}
-              />
-            </div>
-            <div className="auth-field">
-              <label className="auth-label">In-Charge Mobile</label>
-              <input
-                type="tel"
-                className="auth-input"
-                placeholder="+91 94471 23456"
-                value={inChargePhone}
-                onChange={(e) => setInChargePhone(e.target.value)}
-              />
+
+            {/* Interactive Leaflet Point-on-Map Picker */}
+            {showMapPicker && (
+              <div className="camp-map-picker-container">
+                <div className="camp-map-picker-hint">
+                  <span>📍 Click anywhere on map or drag the <b>⛺ camp pin</b> to position the relief facility</span>
+                  <span style={{ fontSize: '11px', color: '#38BDF8', fontWeight: 600 }}>Detected: {district}</span>
+                </div>
+                <div className="camp-map-picker-frame">
+                  <MapContainer
+                    center={[parsedLat, parsedLng]}
+                    zoom={14}
+                    scrollWheelZoom={true}
+                    style={{ height: '100%', width: '100%' }}
+                  >
+                    <TileLayer
+                      url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
+                      attribution='&copy; <a href="https://carto.com/">CARTO</a>'
+                    />
+                    <MapRecenter center={[parsedLat, parsedLng]} />
+                    <LocationPickerMapEvents onLocationPicked={(newLat, newLng) => applyCoordinates(newLat, newLng, "Map Clicked")} />
+                    <Marker
+                      position={[parsedLat, parsedLng]}
+                      icon={campMapPickerIcon}
+                      draggable={true}
+                      eventHandlers={{ dragend: handleMarkerDragEnd }}
+                    />
+                  </MapContainer>
+                </div>
+              </div>
+            )}
+
+            {/* Coordinates & Bed Capacity in Clean Balanced 3 Columns */}
+            <div className="camp-form-row-3">
+              <div className="camp-input-group">
+                <label className="camp-field-label">Latitude (°N) *</label>
+                <input
+                  type="number"
+                  step="0.00001"
+                  className="camp-text-input mono-font"
+                  value={lat}
+                  onChange={(e) => applyCoordinates(e.target.value, lng, "Manual Input")}
+                  required
+                />
+              </div>
+              <div className="camp-input-group">
+                <label className="camp-field-label">Longitude (°E) *</label>
+                <input
+                  type="number"
+                  step="0.00001"
+                  className="camp-text-input mono-font"
+                  value={lng}
+                  onChange={(e) => applyCoordinates(lat, e.target.value, "Manual Input")}
+                  required
+                />
+              </div>
+              <div className="camp-input-group">
+                <label className="camp-field-label">Bed Capacity *</label>
+                <input
+                  type="number"
+                  className="camp-text-input"
+                  value={capacity}
+                  onChange={(e) => setCapacity(e.target.value)}
+                  min="10"
+                  max="10000"
+                  placeholder="e.g. 300"
+                  required
+                />
+              </div>
             </div>
           </div>
 
           {/* 3. Amenities */}
-          <div className="form-section-label" style={{ marginTop: '12px' }}>Available Amenities</div>
-          <div className="amenities-checkbox-grid">
-            <label className="amenity-checkbox-card">
+          <div className="camp-section-label">Available Amenities</div>
+          <div className="camp-amenities-grid">
+            <label className={`camp-amenity-card ${medicalPost ? 'checked' : ''}`}>
               <input
                 type="checkbox"
                 checked={medicalPost}
                 onChange={(e) => setMedicalPost(e.target.checked)}
               />
-              <span>🏥 Medical Aid Post</span>
+              <span className="amenity-title">🏥 Medical Aid Post</span>
             </label>
-            <label className="amenity-checkbox-card">
+            <label className={`camp-amenity-card ${powerBackup ? 'checked' : ''}`}>
               <input
                 type="checkbox"
                 checked={powerBackup}
                 onChange={(e) => setPowerBackup(e.target.checked)}
               />
-              <span>⚡ Power Generator</span>
+              <span className="amenity-title">⚡ Power Generator</span>
             </label>
-            <label className="amenity-checkbox-card">
+            <label className={`camp-amenity-card ${wheelchairAccessible ? 'checked' : ''}`}>
               <input
                 type="checkbox"
                 checked={wheelchairAccessible}
                 onChange={(e) => setWheelchairAccessible(e.target.checked)}
               />
-              <span>♿ Wheelchair Access</span>
+              <span className="amenity-title">♿ Wheelchair Access</span>
             </label>
-            <label className="amenity-checkbox-card">
+            <label className={`camp-amenity-card ${childCare ? 'checked' : ''}`}>
               <input
                 type="checkbox"
                 checked={childCare}
                 onChange={(e) => setChildCare(e.target.checked)}
               />
-              <span>👶 Infant / Child Care</span>
+              <span className="amenity-title">👶 Infant / Child Care</span>
             </label>
           </div>
 
           {/* 4. Initial Emergency Supplies */}
-          <div className="form-section-label" style={{ marginTop: '12px' }}>Initial Emergency Supplies Inventory</div>
-          <div className="form-grid-5">
-            <div className="auth-field">
-              <label className="auth-label">💧 Water (L)</label>
+          <div className="camp-section-label">Initial Emergency Supplies Inventory</div>
+          <div className="camp-supplies-grid">
+            <div className="camp-supply-box">
+              <label className="camp-supply-label">💧 Water (L)</label>
               <input
                 type="number"
-                className="auth-input"
+                className="camp-supply-input"
                 value={waterLitres}
                 onChange={(e) => setWaterLitres(e.target.value)}
+                min="0"
               />
             </div>
-            <div className="auth-field">
-              <label className="auth-label">🍞 Food (Packs)</label>
+            <div className="camp-supply-box">
+              <label className="camp-supply-label">🍞 Food (Packs)</label>
               <input
                 type="number"
-                className="auth-input"
+                className="camp-supply-input"
                 value={foodPackets}
                 onChange={(e) => setFoodPackets(e.target.value)}
+                min="0"
               />
             </div>
-            <div className="auth-field">
-              <label className="auth-label">🩹 Medical Kits</label>
+            <div className="camp-supply-box">
+              <label className="camp-supply-label">🩹 Medical Kits</label>
               <input
                 type="number"
-                className="auth-input"
+                className="camp-supply-input"
                 value={medicalKits}
                 onChange={(e) => setMedicalKits(e.target.value)}
+                min="0"
               />
             </div>
-            <div className="auth-field">
-              <label className="auth-label">🍼 Baby Items</label>
+            <div className="camp-supply-box">
+              <label className="camp-supply-label">🍼 Baby Items</label>
               <input
                 type="number"
-                className="auth-input"
+                className="camp-supply-input"
                 value={infantSupplies}
                 onChange={(e) => setInfantSupplies(e.target.value)}
+                min="0"
               />
             </div>
-            <div className="auth-field">
-              <label className="auth-label">⛽ Fuel (L)</label>
+            <div className="camp-supply-box">
+              <label className="camp-supply-label">⛽ Fuel (L)</label>
               <input
                 type="number"
-                className="auth-input"
+                className="camp-supply-input"
                 value={fuelLitres}
                 onChange={(e) => setFuelLitres(e.target.value)}
+                min="0"
               />
             </div>
           </div>
+          </div>
 
-          {/* Submit Buttons */}
-          <div className="camp-modal-footer" style={{ marginTop: '18px' }}>
-            <button type="button" className="btn-secondary" onClick={onClose} disabled={loading}>
+          {/* 3. Docked Pinned Footer (Always 100% visible, cannot be cut off) */}
+          <div className="camp-modal-footer">
+            <button
+              type="button"
+              className="camp-btn-cancel"
+              onClick={onClose}
+              disabled={loading}
+            >
               Cancel
             </button>
-            <button type="submit" className="auth-submit-btn" disabled={loading} style={{ width: 'auto', padding: '10px 24px' }}>
+            <button
+              type="submit"
+              className="camp-btn-submit"
+              disabled={loading}
+            >
               {loading ? "Saving Camp..." : (editingShelter ? "Save Changes" : "Register Relief Camp")}
             </button>
           </div>
@@ -323,4 +499,6 @@ export default function AddCampModal({
       </div>
     </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(modalContent, document.body) : modalContent;
 }

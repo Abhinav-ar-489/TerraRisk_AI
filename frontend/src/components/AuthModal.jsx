@@ -58,7 +58,7 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, triggerToast
   const [regEmail, setRegEmail] = useState('');
   const [showSecondaryContact, setShowSecondaryContact] = useState(false);
   const [regPassword, setRegPassword] = useState('');
-  const [regRole, setRegRole] = useState('Citizen'); // 'Citizen' | 'Volunteer'
+  const regRole = 'Citizen';
   const [regDistrict, setRegDistrict] = useState('Wayanad');
   const [regLat, setRegLat] = useState(null);
   const [regLng, setRegLng] = useState(null);
@@ -467,45 +467,6 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, triggerToast
                 </>
               )}
             </button>
-
-            {/* Quick Fill Test Accounts */}
-            <div style={{ marginTop: '16px', borderTop: '1px solid var(--border-color)', paddingTop: '12px' }}>
-              <span style={{ fontSize: '11px', fontWeight: '550', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '8px' }}>
-                Quick Test Accounts (Click to Auto-Fill)
-              </span>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '6px' }}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setLoginIdentifier('citizen@terrarisk.org');
-                    setLoginPassword('SecurePassword123!');
-                  }}
-                  className="auth-quick-fill-btn"
-                >
-                  👤 Citizen
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setLoginIdentifier('volunteer@terrarisk.org');
-                    setLoginPassword('Volunteer@2026!');
-                  }}
-                  className="auth-quick-fill-btn"
-                >
-                  ⛑️ Volunteer
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setLoginIdentifier('admin@terrarisk.gov.in');
-                    setLoginPassword('A12345678');
-                  }}
-                  className="auth-quick-fill-btn admin"
-                >
-                  🛡️ Admin
-                </button>
-              </div>
-            </div>
           </form>
         )}
 
@@ -737,38 +698,6 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, triggerToast
                   </span>
                 </div>
               )}
-            </div>
-
-            {/* Account Role Selector Cards */}
-            <div className="auth-field-group">
-              <label className="auth-label">
-                <Shield size={12} className="auth-label-icon" /> Select Account Role
-              </label>
-              <div className="auth-role-grid">
-                <div 
-                  className={`auth-role-card ${regRole === 'Citizen' ? 'selected' : ''}`}
-                  onClick={() => setRegRole('Citizen')}
-                  role="button"
-                  tabIndex={0}
-                >
-                  <div className="auth-role-title-row">
-                    <span className="auth-role-badge citizen">👤 Citizen</span>
-                    {regRole === 'Citizen' && <span className="auth-role-check"><Check size={12} /></span>}
-                  </div>
-                </div>
-
-                <div 
-                  className={`auth-role-card ${regRole === 'Volunteer' ? 'selected' : ''}`}
-                  onClick={() => setRegRole('Volunteer')}
-                  role="button"
-                  tabIndex={0}
-                >
-                  <div className="auth-role-title-row">
-                    <span className="auth-role-badge volunteer">⛑️ Volunteer</span>
-                    {regRole === 'Volunteer' && <span className="auth-role-check"><Check size={12} /></span>}
-                  </div>
-                </div>
-              </div>
             </div>
 
             {/* Dynamic Submit Button depending on email vs phone */}

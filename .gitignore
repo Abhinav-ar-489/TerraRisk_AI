@@ -16,6 +16,7 @@ dist-ssr
 .vscode/*
 !.vscode/extensions.json
 .idea
+.qodo/
 .DS_Store
 *.suo
 *.ntvs*
@@ -40,3 +41,4 @@ __pycache__/
 *.db-shm
 ~$*
 *.tmp
+test_*.png

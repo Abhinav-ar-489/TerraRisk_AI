@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { X, AlertTriangle, ShieldAlert, MapPin, Send, AlertOctagon, Waves, Mountain, Construction, Zap, Camera, Sparkles } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { X, AlertTriangle, ShieldAlert, MapPin, Send, AlertOctagon, Waves, Mountain, Construction, Zap, Camera, Sparkles, Navigation, CheckCircle2, RefreshCw } from 'lucide-react';
 import api from '../services/api';
 
 const HAZARD_CATEGORIES = [
@@ -18,7 +18,40 @@ const SEVERITY_LEVELS = [
   { level: 5, label: 'Catastrophic / Life Threat', color: '#9B59B6', desc: 'Active mass wasting, debris torrent requiring instant evacuation' }
 ];
 
-export default function ReportHazardModal({ isOpen, onClose, coordinates, user, token, onReportSuccess, triggerToast }) {
+const compressImage = (file) => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = (e) => {
+      const img = new Image();
+      img.src = e.target.result;
+      img.onload = () => {
+        let { width, height } = img;
+        const maxDim = 1200;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        const compressedB64 = canvas.toDataURL('image/jpeg', 0.8);
+        resolve(compressedB64);
+      };
+      img.onerror = () => reject(new Error('Failed to load image for compression'));
+    };
+    reader.onerror = () => reject(new Error('Failed to read image file'));
+  });
+};
+
+export default function ReportHazardModal({ isOpen, onClose, coordinates, user, token, onPickOnMap, onReportSuccess, triggerToast }) {
   const [hazardType, setHazardType] = useState('mud_crack');
   const [severity, setSeverity] = useState(3);
   const [description, setDescription] = useState('');
@@ -29,19 +62,74 @@ export default function ReportHazardModal({ isOpen, onClose, coordinates, user, 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  // Auto-location telemetry state to guarantee report credibility
+  const [reportLat, setReportLat] = useState(coordinates?.lat ? parseFloat(coordinates.lat.toFixed(5)) : 11.5510);
+  const [reportLng, setReportLng] = useState(coordinates?.lng ? parseFloat(coordinates.lng.toFixed(5)) : 76.1280);
+  const [isLocating, setIsLocating] = useState(false);
+  const [isGpsVerified, setIsGpsVerified] = useState(false);
+  const [gpsAccuracy, setGpsAccuracy] = useState(null);
+
+  // Automatically fetch live GPS on modal open to guarantee incident credibility
+  useEffect(() => {
+    if (!isOpen) return;
+
+    if (navigator.geolocation) {
+      setIsLocating(true);
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const latVal = parseFloat(pos.coords.latitude.toFixed(5));
+          const lngVal = parseFloat(pos.coords.longitude.toFixed(5));
+          const acc = Math.round(pos.coords.accuracy);
+          setReportLat(latVal);
+          setReportLng(lngVal);
+          setGpsAccuracy(acc);
+          setIsGpsVerified(true);
+          setIsLocating(false);
+        },
+        (err) => {
+          setIsLocating(false);
+          console.warn("Auto GPS fetch notice:", err.message);
+          if (coordinates?.lat && coordinates?.lng) {
+            setReportLat(parseFloat(coordinates.lat.toFixed(5)));
+            setReportLng(parseFloat(coordinates.lng.toFixed(5)));
+            if (coordinates.isGps) {
+              setIsGpsVerified(true);
+              setGpsAccuracy(coordinates.accuracy || 15);
+            }
+          }
+        },
+        { enableHighAccuracy: true, timeout: 9000, maximumAge: 0 }
+      );
+    } else if (coordinates?.lat && coordinates?.lng) {
+      setReportLat(parseFloat(coordinates.lat.toFixed(5)));
+      setReportLng(parseFloat(coordinates.lng.toFixed(5)));
+    }
+  }, [isOpen]);
+
+  // Sync if parent updates picked pin manually
+  useEffect(() => {
+    if (coordinates?.lat && coordinates?.lng && !isLocating) {
+      setReportLat(parseFloat(coordinates.lat.toFixed(5)));
+      setReportLng(parseFloat(coordinates.lng.toFixed(5)));
+      if (coordinates.isGps) {
+        setIsGpsVerified(true);
+        setGpsAccuracy(coordinates.accuracy || 10);
+      }
+    }
+  }, [coordinates?.lat, coordinates?.lng]);
+
   if (!isOpen) return null;
 
-  const lat = coordinates?.lat ? parseFloat(coordinates.lat.toFixed(4)) : 11.5510;
-  const lng = coordinates?.lng ? parseFloat(coordinates.lng.toFixed(4)) : 76.1280;
+  const lat = reportLat;
+  const lng = reportLng;
   const selectedSeverityObj = SEVERITY_LEVELS.find(s => s.level === severity) || SEVERITY_LEVELS[2];
 
-  const handlePhotoSelect = (e) => {
-    const file = e.target.files[0];
+  const handlePhotoSelect = async (e) => {
+    const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      const b64 = event.target.result;
+    try {
+      const b64 = await compressImage(file);
       setPhotoBase64(b64);
       setPhotoPreview(b64);
 
@@ -53,7 +141,7 @@ export default function ReportHazardModal({ isOpen, onClose, coordinates, user, 
           image: b64,
           hazard_type: hazardType
         });
-        if (res.data.success) {
+        if (res.data?.success) {
           setCvFeedback(res.data.analysis);
         }
       } catch {
@@ -61,8 +149,10 @@ export default function ReportHazardModal({ isOpen, onClose, coordinates, user, 
       } finally {
         setCvAnalyzing(false);
       }
-    };
-    reader.readAsDataURL(file);
+    } catch (err) {
+      console.error("Image compression error:", err);
+      setError("Failed to process image. Please try another photo.");
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -87,7 +177,9 @@ export default function ReportHazardModal({ isOpen, onClose, coordinates, user, 
         lng: lng,
         severity: severity,
         description: description.trim(),
-        image: photoBase64
+        image: photoBase64,
+        is_gps_verified: isGpsVerified,
+        gps_accuracy: gpsAccuracy
       });
 
       if (res.data.success) {
@@ -132,16 +224,70 @@ export default function ReportHazardModal({ isOpen, onClose, coordinates, user, 
         )}
 
         <form onSubmit={handleSubmit} className="report-hazard-form">
-          {/* Coordinates & Reporter Profile Pill */}
-          <div className="report-hazard-meta-banner">
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <MapPin size={13} color="var(--accent)" />
-              <span style={{ fontSize: '11.5px', fontWeight: '550', color: 'var(--text-primary)' }}>
-                GPS Locked: ({lat}°N, {lng}°E)
-              </span>
+          {/* Coordinates & Reporter Profile Pill with Auto-Location Credibility */}
+          <div className="report-hazard-meta-banner" style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '10px 12px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <MapPin size={13} color="var(--accent)" />
+                <span style={{ fontSize: '11.5px', fontWeight: '600', color: 'var(--text-primary)' }}>
+                  {isGpsVerified ? 'GPS Location:' : 'Target Location:'} ({lat}°N, {lng}°E)
+                </span>
+                {onPickOnMap && (
+                  <button
+                    type="button"
+                    onClick={onPickOnMap}
+                    style={{
+                      fontSize: '11px',
+                      padding: '2px 8px',
+                      borderRadius: '6px',
+                      border: '1px solid var(--border-color)',
+                      background: 'rgba(56, 189, 248, 0.12)',
+                      color: '#38BDF8',
+                      cursor: 'pointer',
+                      fontWeight: '600',
+                      marginLeft: '4px'
+                    }}
+                    title="Pick a different location by clicking on the map"
+                  >
+                    📍 Adjust on Map
+                  </button>
+                )}
+              </div>
+              <div style={{ fontSize: '10.5px', color: 'var(--text-secondary)', fontWeight: '500' }}>
+                Reporter: <b style={{ color: 'var(--accent-green)' }}>{user?.name?.split(' ')[0] || 'Citizen'}</b> {user?.is_verified || user?.role === 'Authority_Admin' ? <span style={{ color: '#30D158' }}>✓ Verified</span> : <span style={{ color: 'var(--text-secondary)' }}>• Active</span>}
+              </div>
             </div>
-            <div style={{ fontSize: '10.5px', color: 'var(--text-secondary)', fontWeight: '500' }}>
-              Reporter: <b style={{ color: 'var(--accent-green)' }}>{user?.name?.split(' ')[0] || 'Citizen'}</b> {user?.is_verified || user?.role === 'Authority_Admin' ? <span style={{ color: '#30D158' }}>✓ Verified</span> : <span style={{ color: 'var(--text-secondary)' }}>• Active</span>}
+
+            {/* Auto-Location Credibility Guarantee Banner */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              background: isLocating ? 'rgba(56, 189, 248, 0.08)' : isGpsVerified ? 'rgba(48, 209, 88, 0.12)' : 'rgba(245, 158, 11, 0.08)',
+              border: `1px solid ${isLocating ? 'rgba(56, 189, 248, 0.25)' : isGpsVerified ? 'rgba(48, 209, 88, 0.35)' : 'rgba(245, 158, 11, 0.25)'}`,
+              borderRadius: '8px',
+              padding: '6px 10px',
+              fontSize: '11px',
+              fontWeight: '550'
+            }}>
+              {isLocating ? (
+                <>
+                  <RefreshCw size={12} className="auth-spinner" style={{ color: '#38BDF8' }} />
+                  <span style={{ color: '#38BDF8' }}>🛰️ Auto-fetching live GPS to guarantee incident credibility...</span>
+                </>
+              ) : isGpsVerified ? (
+                <>
+                  <CheckCircle2 size={13} style={{ color: '#30D158' }} />
+                  <span style={{ color: '#30D158' }}>
+                    🛰️ Live GPS Auto-Verified (High Credibility{gpsAccuracy ? ` • ±${gpsAccuracy}m precision` : ''})
+                  </span>
+                </>
+              ) : (
+                <>
+                  <Navigation size={12} style={{ color: '#F59E0B' }} />
+                  <span style={{ color: '#F59E0B' }}>📍 Pinned Location ({lat}°, {lng}°)</span>
+                </>
+              )}
             </div>
           </div>
 
@@ -220,18 +366,29 @@ export default function ReportHazardModal({ isOpen, onClose, coordinates, user, 
               )}
 
               {cvFeedback && (
-                <div className={`cv-feedback-pill ${cvFeedback.is_genuine_hazard ? 'genuine' : 'warning'}`}>
-                  <Sparkles size={13} />
-                  <span>
-                    {cvFeedback.is_genuine_hazard ? '✓ Verified Hazard' : '⚠️ Non-Hazard Scene'}: {Math.round(cvFeedback.confidence_score * 100)}% ({cvFeedback.detected_hazard.replace(/_/g, ' ')})
-                  </span>
+                <div className={`cv-keyword-badge-container ${cvFeedback.is_genuine_hazard ? 'genuine' : 'warning'}`}>
+                  <div className="cv-keyword-pill-header">
+                    <span className="cv-keyword-code">
+                      {cvFeedback.keyword || (cvFeedback.is_genuine_hazard ? 'INCIDENT_VERIFIED_TRUE' : 'INCIDENT_VERIFIED_FALSE')}
+                    </span>
+                    <span className={`cv-keyword-verdict ${cvFeedback.is_genuine_hazard ? 'genuine' : 'warning'}`}>
+                      {cvFeedback.is_genuine_hazard ? '✓ INCIDENT CONFIRMED' : '⚠️ INCIDENT REJECTED'}
+                    </span>
+                    <span className="cv-keyword-conf">
+                      {Math.round(cvFeedback.confidence_score * 100)}% Confidence
+                    </span>
+                  </div>
+                  <div className="cv-keyword-label-row">
+                    <Sparkles size={13} />
+                    <span>{cvFeedback.status_text || (cvFeedback.is_genuine_hazard ? 'Disaster Hazard Verified' : 'Non-Hazard Scene')}</span>
+                  </div>
                 </div>
               )}
             </div>
 
             {cvFeedback?.ai_summary && (
-              <div style={{ fontSize: '11px', color: cvFeedback.is_genuine_hazard ? 'var(--text-secondary)' : '#FF453A', padding: '4px 8px', background: cvFeedback.is_genuine_hazard ? 'rgba(255,255,255,0.04)' : 'rgba(239,68,68,0.1)', borderRadius: '8px', border: `1px solid ${cvFeedback.is_genuine_hazard ? 'var(--border-color)' : 'rgba(239,68,68,0.2)'}`, marginTop: '4px' }}>
-                <strong>AI Assessment:</strong> {cvFeedback.ai_summary}
+              <div className={`cv-summary-card ${cvFeedback.is_genuine_hazard ? 'genuine' : 'warning'}`}>
+                <strong>Geotechnical Assessment:</strong> {cvFeedback.ai_summary}
               </div>
             )}
 

@@ -26,6 +26,15 @@ BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
+for _env_candidate in [
+    os.path.join(BACKEND_DIR, ".env"),
+    os.path.join(BACKEND_DIR, "..", ".env"),
+    os.path.join(BACKEND_DIR, "..", "backend", ".env"),
+    ".env"
+]:
+    if os.path.exists(_env_candidate):
+        load_dotenv(_env_candidate, override=False)
+
 try:
     from database import (
         init_db,
@@ -323,10 +332,10 @@ def token_required(f):
 def authority_required(f):
     @functools.wraps(f)
     def decorated(current_user, *args, **kwargs):
-        if current_user.get("role") not in ("Authority_Admin", "Volunteer"):
+        if current_user.get("role") != "Authority_Admin":
             return jsonify({
                 "success": False,
-                "error": "Access restricted. Action requires Authority Admin or Verified Volunteer credentials."
+                "error": "Access restricted. Action requires verified Authority Admin credentials."
             }), 403
         return f(current_user, *args, **kwargs)
     return decorated
@@ -586,7 +595,7 @@ def register():
         if not re.search(r"\d", password):
             return jsonify({"success": False, "error": "Password must contain at least one number."}), 400
 
-        if role not in ("Citizen", "Volunteer"):
+        if role != "Authority_Admin":
             role = "Citizen"
 
         existing_phone_user = get_user_by_phone(phone) if phone else None
@@ -1102,6 +1111,8 @@ def report_incident(current_user):
         description = data.get("description", "").strip()
         severity = data.get("severity", 3)
         image_url = data.get("image_url") or data.get("image")
+        is_gps_verified = bool(data.get("is_gps_verified", False))
+        gps_accuracy = data.get("gps_accuracy")
 
         valid_hazards = ('mud_crack', 'stream_overflow', 'rockfall', 'blocked_road', 'slope_movement')
         if hazard_type not in valid_hazards:
@@ -1128,7 +1139,7 @@ def report_incident(current_user):
             ai_haz = cv_analysis.get("detected_hazard")
             ai_sev = cv_analysis.get("suggested_severity")
             ai_sum = cv_analysis.get("ai_summary")
-            is_spam_flag = 1 if cv_analysis.get("is_spam") else 0
+            is_spam_flag = 1 if (cv_analysis.get("is_spam") or not cv_analysis.get("is_genuine_hazard", True)) else 0
 
         # 2. Spatial Auto-Clustering (500m / 2h)
         cluster_id = find_nearby_pending_cluster(lat=lat, lng=lng, radius_km=0.5, hours_window=2.0)
@@ -1158,16 +1169,27 @@ def report_incident(current_user):
         # 4. Check for auto-verification consensus threshold (>= 5 reports in area)
         is_auto_verified, report_consensus_count = check_and_autoverify_cluster(cluster_id, threshold=5)
 
+        # 5. Live GPS Credibility Boost
+        if is_gps_verified:
+            try:
+                curr_score = current_user.get("credibility_score", 100)
+                update_user_credibility(current_user["id"], min(100, curr_score + 2))
+            except Exception:
+                pass
+
+        gps_detail = f" | GPS Verified (±{gps_accuracy}m)" if is_gps_verified else " | Manual Pin"
         log_audit_action(
             "INCIDENT_REPORTED",
             actor_id=current_user["id"],
             target_id=incident_id,
-            details=f"Hazard: {hazard_type} (Sev: {severity}) | AI Conf: {ai_conf} | Cluster: {cluster_id} | AutoVerified: {is_auto_verified} ({report_consensus_count} reports)"
+            details=f"Hazard: {hazard_type} (Sev: {severity}) | AI Conf: {ai_conf} | Cluster: {cluster_id}{gps_detail} | AutoVerified: {is_auto_verified} ({report_consensus_count} reports)"
         )
 
         msg = "Hazard report submitted and analyzed by Computer Vision Brain."
         if is_auto_verified:
             msg = f"Hazard report submitted. Cluster reached {report_consensus_count} community reports and has been AUTO-VERIFIED on the map!"
+        elif is_gps_verified:
+            msg = f"Live GPS-verified hazard report submitted successfully. Credibility confirmed."
 
         return jsonify({
             "success": True,
@@ -1176,6 +1198,8 @@ def report_incident(current_user):
             "cluster_id": cluster_id,
             "is_clustered": is_clustered,
             "is_auto_verified": is_auto_verified,
+            "is_gps_verified": is_gps_verified,
+            "gps_accuracy": gps_accuracy,
             "consensus_count": report_consensus_count,
             "ai_analysis": cv_analysis
         }), 201
@@ -1493,7 +1517,7 @@ def create_new_shelter(current_user):
         lat = data.get("lat")
         lng = data.get("lng")
         capacity = data.get("capacity", 100)
-        contact_number = data.get("contact_number", "").strip()
+        contact_number = data.get("contact_number", "").strip() or "1077"
         district = data.get("district", "Wayanad").strip()
         in_charge_name = data.get("in_charge_name", "").strip()
         in_charge_phone = data.get("in_charge_phone", "").strip()
@@ -1501,8 +1525,8 @@ def create_new_shelter(current_user):
         amenities = data.get("amenities", {})
         status = data.get("status", "active").strip()
 
-        if not name or lat is None or lng is None or not contact_number:
-            return jsonify({"success": False, "error": "Name, coordinates (lat, lng), and contact number are required"}), 400
+        if not name or lat is None or lng is None:
+            return jsonify({"success": False, "error": "Camp name and coordinates (lat, lng) are required"}), 400
 
         shelter_id = create_relief_shelter(
             name=name, lat=float(lat), lng=float(lng), capacity=int(capacity),

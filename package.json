@@ -1,11 +1,5 @@
 {
-  "name": "terrarisk-ai-root",
-  "version": "1.0.0",
-  "private": true,
-  "workspaces": [
-    "frontend"
-  ],
-  "scripts": {
-    "build": "npm run build --prefix frontend"
+  "devDependencies": {
+    "playwright": "^1.63.0"
   }
 }

@@ -15,16 +15,7 @@ import hashlib
 import secrets
 from datetime import datetime, timedelta
 import re
-from typing import List, Dict, Any, Optional, Tuple, Union
-from dotenv import load_dotenv
-
-# Supabase / PostgreSQL cloud connection support
-try:
-    import psycopg2
-    import psycopg2.extras
-    PSYCOPG2_AVAILABLE = True
-except ImportError:
-    PSYCOPG2_AVAILABLE = False
+from typing import List, Dict, Any, Optional, Tuple
 
 # Force UTF-8 encoding on Windows console streams if available
 if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
@@ -37,9 +28,6 @@ if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 DEFAULT_DB_PATH = os.path.join(DATA_DIR, "disaster_platform.db")
-
-# Automatically load environment variables from backend/.env
-load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 
 # ==============================================================================
@@ -74,215 +62,23 @@ def verify_password(password: str, hashed_password: str) -> bool:
 
 
 # ==============================================================================
-# POSTGRESQL / SUPABASE SQL ADAPTER & WRAPPERS
+# DATABASE CONNECTION MANAGEMENT
 # ==============================================================================
-def is_postgres_configured(db_path: Optional[str] = None) -> bool:
-    """Return True if PostgreSQL / Supabase connection is active and requested."""
-    if db_path is not None:
-        # Explicit path (like test .db) forces SQLite
-        return False
-    url = os.environ.get("DATABASE_URL") or os.environ.get("SUPABASE_DB_URL")
-    return bool(url and (url.startswith("postgresql://") or url.startswith("postgres://")))
-
-
-def adapt_sql_for_pg(sql: str) -> str:
+def get_db_connection(db_path: Optional[str] = None) -> sqlite3.Connection:
     """
-    Translates SQLite parameterized SQL query to PostgreSQL format:
-    1. Replaces '?' placeholders with '%s' (preserving '?' inside string literals).
+    Establish a connection to the SQLite database with row factory,
+    foreign key constraints, and WAL journal mode enabled.
     """
-    if not sql or '?' not in sql:
-        return sql
-
-    out = []
-    in_single_quote = False
-    in_double_quote = False
-    i = 0
-    n = len(sql)
-    while i < n:
-        c = sql[i]
-        if c == "'" and not in_double_quote:
-            if in_single_quote and i + 1 < n and sql[i + 1] == "'":
-                out.append("''")
-                i += 2
-                continue
-            in_single_quote = not in_single_quote
-            out.append(c)
-        elif c == '"' and not in_single_quote:
-            in_double_quote = not in_double_quote
-            out.append(c)
-        elif c == '?' and not in_single_quote and not in_double_quote:
-            out.append('%s')
-        else:
-            out.append(c)
-        i += 1
-    return "".join(out)
-
-
-class PostgresCursorWrapper:
-    """
-    Wraps a psycopg2 cursor to provide a drop-in SQLite-compatible interface:
-    - Translates '?' placeholders to '%s' via adapt_sql_for_pg.
-    - Emulates cursor.lastrowid on INSERT queries using RETURNING id.
-    - Supports row access by column name via RealDictRow.
-    """
-    def __init__(self, pg_cursor, connection_wrapper=None):
-        self._cursor = pg_cursor
-        self._conn_wrapper = connection_wrapper
-        self.lastrowid = None
-
-    def execute(self, sql: str, params: Any = None):
-        adapted = adapt_sql_for_pg(sql)
-        trimmed = adapted.strip()
-        is_insert = trimmed.upper().startswith("INSERT INTO")
-        has_returning = "RETURNING" in trimmed.upper()
-        
-        # If it is an INSERT into a table and lacks RETURNING, add it to capture lastrowid
-        should_add_returning = is_insert and not has_returning
-        if should_add_returning:
-            adapted = trimmed.rstrip(";").strip() + " RETURNING id;"
-
-        if params is not None:
-            if isinstance(params, list):
-                params = tuple(params)
-            self._cursor.execute(adapted, params)
-        else:
-            self._cursor.execute(adapted)
-
-        if should_add_returning:
-            try:
-                row = self._cursor.fetchone()
-                if row:
-                    self.lastrowid = row.get("id") if isinstance(row, dict) else row[0]
-            except Exception:
-                self.lastrowid = None
-        else:
-            self.lastrowid = None
-            
-        return self
-
-    def executemany(self, sql: str, seq_of_parameters: Any):
-        adapted = adapt_sql_for_pg(sql)
-        return self._cursor.executemany(adapted, seq_of_parameters)
-
-    def fetchone(self):
-        return self._cursor.fetchone()
-
-    def fetchall(self):
-        return self._cursor.fetchall()
-
-    def fetchmany(self, size=None):
-        return self._cursor.fetchmany(size) if size else self._cursor.fetchmany()
-
-    @property
-    def rowcount(self):
-        return self._cursor.rowcount
-
-    @property
-    def description(self):
-        return self._cursor.description
-
-    def close(self):
-        try:
-            self._cursor.close()
-        except Exception:
-            pass
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
-
-    def __iter__(self):
-        return iter(self._cursor)
-
-
-class PostgresConnectionWrapper:
-    """
-    Wraps a psycopg2 connection to provide SQLite-compatible semantics:
-    - Returns PostgresCursorWrapper with RealDictCursor.
-    - Manages context manager commit/rollback.
-    """
-    def __init__(self, pg_conn):
-        self._conn = pg_conn
-
-    def cursor(self):
-        cur = self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        return PostgresCursorWrapper(cur, self)
-
-    def execute(self, sql: str, params: Any = None):
-        cur = self.cursor()
-        cur.execute(sql, params)
-        return cur
-
-    def commit(self):
-        self._conn.commit()
-
-    def rollback(self):
-        self._conn.rollback()
-
-    def close(self):
-        try:
-            self._conn.close()
-        except Exception:
-            pass
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if exc_type is not None:
-            self.rollback()
-        else:
-            self.commit()
-        self.close()
-
-
-# ==============================================================================
-# DATABASE CONNECTION MANAGEMENT (HYBRID POSTGRESQL / SQLITE)
-# ==============================================================================
-def get_db_connection(db_path: Optional[str] = None):
-    """
-    Establish a connection to either:
-    1. Supabase / PostgreSQL cloud database if DATABASE_URL or SUPABASE_DB_URL is set (and db_path is None).
-    2. SQLite database with row factory, foreign key constraints, and WAL journal mode enabled.
-    """
-    if is_postgres_configured(db_path):
-        if not PSYCOPG2_AVAILABLE:
-            raise RuntimeError(
-                "PostgreSQL / Supabase connection requested (DATABASE_URL is set), "
-                "but 'psycopg2' is not installed. Please run: pip install psycopg2-binary"
-            )
-        raw_url = os.environ.get("DATABASE_URL") or os.environ.get("SUPABASE_DB_URL")
-        # Normalize postgres:// to postgresql:// for psycopg2
-        if raw_url.startswith("postgres://"):
-            raw_url = "postgresql://" + raw_url[len("postgres://"):]
-        
-        try:
-            conn = psycopg2.connect(
-                raw_url,
-                sslmode="require",
-                connect_timeout=15,
-                keepalives=1,
-                keepalives_idle=30,
-                keepalives_interval=10,
-                keepalives_count=5
-            )
-            return PostgresConnectionWrapper(conn)
-        except Exception as err:
-            print(f"[ERROR] [Supabase/PostgreSQL] Connection failed: {err}")
-            raise
-    else:
-        path = db_path or os.environ.get("DATABASE_PATH", DEFAULT_DB_PATH)
-        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-        
-        conn = sqlite3.connect(path, timeout=10.0)
-        conn.row_factory = sqlite3.Row
-        
-        conn.execute("PRAGMA foreign_keys = ON;")
-        conn.execute("PRAGMA journal_mode = WAL;")
-        conn.execute("PRAGMA synchronous = NORMAL;")
-        return conn
+    path = db_path or os.environ.get("DATABASE_PATH", DEFAULT_DB_PATH)
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    
+    conn = sqlite3.connect(path, timeout=10.0)
+    conn.row_factory = sqlite3.Row
+    
+    conn.execute("PRAGMA foreign_keys = ON;")
+    conn.execute("PRAGMA journal_mode = WAL;")
+    conn.execute("PRAGMA synchronous = NORMAL;")
+    return conn
 
 
 # ==============================================================================
@@ -308,186 +104,14 @@ def calculate_haversine_distance(lat1: float, lon1: float, lat2: float, lon2: fl
     return round(distance_km, 3)
 
 
-def init_postgres_db(conn) -> None:
-    """
-    Initialize PostgreSQL / Supabase tables, indexes, and initial seed records.
-    """
-    cursor = conn.cursor()
-    
-    # 1. Users Table
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id BIGSERIAL PRIMARY KEY,
-            name TEXT NOT NULL,
-            phone TEXT UNIQUE,
-            email TEXT UNIQUE,
-            password_hash TEXT NOT NULL,
-            lat DOUBLE PRECISION,
-            lng DOUBLE PRECISION,
-            district TEXT,
-            role TEXT NOT NULL DEFAULT 'Citizen' CHECK(role IN ('Citizen', 'Volunteer', 'Authority_Admin')),
-            is_verified INT NOT NULL DEFAULT 0,
-            is_email_verified INT NOT NULL DEFAULT 0,
-            email_otp TEXT,
-            email_otp_expires_at TIMESTAMP WITH TIME ZONE,
-            credibility_score INT NOT NULL DEFAULT 100,
-            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        );
-    """)
-
-    # 2. Incident Reports Table
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS incident_reports (
-            id BIGSERIAL PRIMARY KEY,
-            user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
-            hazard_type TEXT NOT NULL,
-            lat DOUBLE PRECISION NOT NULL,
-            lng DOUBLE PRECISION NOT NULL,
-            description TEXT,
-            image_url TEXT,
-            severity INT NOT NULL DEFAULT 3 CHECK(severity >= 1 AND severity <= 5),
-            status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'verified', 'rejected', 'resolved', 'cleared')),
-            cluster_id TEXT,
-            verified_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
-            ai_confidence DOUBLE PRECISION,
-            ai_hazard_type TEXT,
-            ai_severity INT,
-            ai_summary TEXT,
-            is_flagged_spam INT DEFAULT 0,
-            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        );
-    """)
-
-    # 3. Relief Shelters Table
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS relief_shelters (
-            id BIGSERIAL PRIMARY KEY,
-            name TEXT NOT NULL,
-            lat DOUBLE PRECISION NOT NULL,
-            lng DOUBLE PRECISION NOT NULL,
-            capacity INT NOT NULL DEFAULT 100 CHECK(capacity >= 0),
-            occupied INT NOT NULL DEFAULT 0 CHECK(occupied >= 0),
-            contact_number TEXT,
-            district TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'full', 'standby', 'closed')),
-            in_charge_name TEXT,
-            in_charge_phone TEXT,
-            supplies_json TEXT,
-            amenities_json TEXT,
-            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        );
-    """)
-
-    # 4. Missing Persons Registry
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS missing_persons (
-            id BIGSERIAL PRIMARY KEY,
-            name TEXT NOT NULL,
-            age INT,
-            gender TEXT,
-            last_known_location TEXT,
-            lat DOUBLE PRECISION,
-            lng DOUBLE PRECISION,
-            contact_phone TEXT,
-            photo_url TEXT,
-            medical_needs TEXT,
-            status TEXT NOT NULL DEFAULT 'missing' CHECK(status IN ('missing', 'search_in_progress', 'located_safe', 'hospitalized')),
-            located_at_shelter_id BIGINT REFERENCES relief_shelters(id) ON DELETE SET NULL,
-            reported_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
-            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        );
-    """)
-
-    # 5. Family Safety Contacts Table
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS family_safety_contacts (
-            id BIGSERIAL PRIMARY KEY,
-            user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            contact_name TEXT NOT NULL,
-            contact_phone TEXT NOT NULL,
-            relationship TEXT,
-            last_ping_status TEXT,
-            last_ping_lat DOUBLE PRECISION,
-            last_ping_lng DOUBLE PRECISION,
-            last_ping_at TIMESTAMP WITH TIME ZONE,
-            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        );
-    """)
-
-    # 6. Volunteer Missions Table
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS volunteer_missions (
-            id BIGSERIAL PRIMARY KEY,
-            cluster_id TEXT NOT NULL,
-            volunteer_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
-            status TEXT NOT NULL DEFAULT 'dispatched' CHECK(status IN ('dispatched', 'en_route', 'on_site', 'verified', 'resolved')),
-            assigned_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
-            notes TEXT,
-            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        );
-    """)
-
-    # 7. Audit Logs Table
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS audit_logs (
-            id BIGSERIAL PRIMARY KEY,
-            action TEXT NOT NULL,
-            actor_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
-            target_id BIGINT,
-            details TEXT,
-            timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        );
-    """)
-
-    # 8. Emergency Broadcasts Table
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS emergency_broadcasts (
-            id BIGSERIAL PRIMARY KEY,
-            broadcast_id TEXT UNIQUE NOT NULL,
-            hazard_type TEXT NOT NULL,
-            lat DOUBLE PRECISION NOT NULL,
-            lng DOUBLE PRECISION NOT NULL,
-            radius_km DOUBLE PRECISION NOT NULL,
-            alert_en TEXT NOT NULL,
-            alert_ml TEXT NOT NULL,
-            recipients_count INT DEFAULT 0,
-            sender TEXT,
-            telegram_link TEXT,
-            whatsapp_link TEXT,
-            sent_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        );
-    """)
-
-    # Indexes
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_phone ON users(phone);")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_incident_reports_status ON incident_reports(status);")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_incident_reports_coords ON incident_reports(lat, lng);")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_relief_shelters_coords ON relief_shelters(lat, lng);")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_emergency_broadcasts_sent ON emergency_broadcasts(sent_at DESC);")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_emergency_broadcasts_bid ON emergency_broadcasts(broadcast_id);")
-
-    conn.commit()
-    seed_initial_data(conn)
-
-
+# ==============================================================================
+# SCHEMA DEFINITION & DYNAMIC MIGRATIONS
+# ==============================================================================
 def init_db(db_path: Optional[str] = None) -> None:
     """
-    Initialize database tables, indexes, dynamic column migrations,
-    and seed default records (supports both PostgreSQL/Supabase and SQLite).
+    Initialize SQLite database tables, indexes, dynamic column migrations,
+    and seed default records.
     """
-    if is_postgres_configured(db_path):
-        conn = get_db_connection(db_path)
-        try:
-            init_postgres_db(conn)
-            print("[OK] [Database] Supabase / PostgreSQL Engine & Schema initialized successfully.")
-        finally:
-            conn.close()
-        return
-
     target_path = db_path or os.environ.get("DATABASE_PATH", DEFAULT_DB_PATH)
     os.makedirs(os.path.dirname(os.path.abspath(target_path)), exist_ok=True)
     
@@ -749,8 +373,10 @@ def init_db(db_path: Optional[str] = None) -> None:
         cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL;")
         cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone ON users(phone) WHERE phone IS NOT NULL;")
             
-        # Authority Admins and NDRF Volunteers are verified officials by default
-        cursor.execute("UPDATE users SET is_verified = 1 WHERE role IN ('Authority_Admin', 'Volunteer');")
+        # Authority Admins are verified officials by default
+        cursor.execute("UPDATE users SET is_verified = 1 WHERE role = 'Authority_Admin';")
+        cursor.execute("UPDATE users SET role = 'Citizen' WHERE role = 'Volunteer';")
+        cursor.execute("DELETE FROM users WHERE email = 'volunteer@terrarisk.org';")
         
         # Clear any legacy static home coordinates so only live location is utilized
         cursor.execute("UPDATE users SET lat = NULL, lng = NULL, district = NULL;")
@@ -842,34 +468,7 @@ def seed_initial_data(conn: Optional[sqlite3.Connection] = None, db_path: Option
                 WHERE phone = ? OR email = ?;
             """, (cmd_email, cmd_hash, cmd_phone, cmd_email))
 
-        # 2. Seed Default Field Volunteer
-        vol_phone = "+919888800000"
-        vol_email = "volunteer@terrarisk.org"
-        vol_hash = hash_password("Volunteer@2026!")
-        cursor.execute("SELECT id FROM users WHERE phone = ? OR email = ? LIMIT 1;", (vol_phone, vol_email))
-        vol_row = cursor.fetchone()
-        if not vol_row:
-            cursor.execute("""
-                INSERT INTO users (name, phone, email, password_hash, lat, lng, district, role, is_verified, is_email_verified, credibility_score)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-            """, (
-                "Anandhu Nair (NDRF Volunteer)",
-                vol_phone,
-                vol_email,
-                vol_hash,
-                None,
-                None,
-                None,
-                "Volunteer",
-                1,
-                1,
-                100
-            ))
-        else:
-            cursor.execute("""
-                UPDATE users SET role = 'Volunteer', email = ?, is_verified = 1, is_email_verified = 1, password_hash = ?, lat = NULL, lng = NULL, district = NULL
-                WHERE phone = ? OR email = ?;
-            """, (vol_email, vol_hash, vol_phone, vol_email))
+
 
         # 3. Seed Default Sample Citizen (For quick evaluator logins)
         cit_phone = "+919847012345"
@@ -1073,10 +672,10 @@ def create_user(
     credibility_score: int = 100,
     db_path: Optional[str] = None
 ) -> int:
-    valid_roles = ("Citizen", "Volunteer", "Authority_Admin")
+    valid_roles = ("Citizen", "Authority_Admin")
     if role not in valid_roles:
         role = "Citizen"
-    if role in ("Authority_Admin", "Volunteer"):
+    if role == "Authority_Admin":
         is_verified = 1
         is_email_verified = 1
         
@@ -1202,10 +801,7 @@ def verify_email_otp(
             return False, "Invalid verification code. Please check your email and try again.", None
 
         try:
-            if isinstance(expires_at_str, datetime):
-                expires_at = expires_at_str.replace(tzinfo=None)
-            else:
-                expires_at = datetime.strptime(str(expires_at_str).split(".")[0].replace("Z", ""), "%Y-%m-%d %H:%M:%S")
+            expires_at = datetime.strptime(expires_at_str, "%Y-%m-%d %H:%M:%S")
             if datetime.utcnow() > expires_at:
                 return False, "Verification code has expired. Please request a new code.", None
         except Exception:
@@ -1572,14 +1168,12 @@ def find_nearby_pending_cluster(
     conn = get_db_connection(db_path)
     try:
         cursor = conn.cursor()
-        cutoff_dt = datetime.utcnow() - timedelta(hours=float(hours_window))
-        cutoff_str = cutoff_dt.strftime("%Y-%m-%d %H:%M:%S")
         cursor.execute("""
             SELECT id, lat, lng, cluster_id, created_at
             FROM incident_reports
             WHERE status IN ('pending', 'verified')
-              AND created_at >= ?;
-        """, (cutoff_str,))
+              AND datetime(created_at) >= datetime('now', '-' || ? || ' hours');
+        """, (str(hours_window),))
         rows = cursor.fetchall()
         
         for row in rows:
@@ -1733,6 +1327,21 @@ def get_nearby_incidents(
                 results.append(inc_dict)
         results.sort(key=lambda x: x["distance_km"])
         return results
+    finally:
+        conn.close()
+
+
+def get_all_incident_sites(db_path: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Retrieve all reported incident sites (pending, verified, and historical) to avoid in routing."""
+    conn = get_db_connection(db_path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, hazard_type, lat, lng, severity, status, description, cluster_id
+            FROM incident_reports
+            WHERE lat IS NOT NULL AND lng IS NOT NULL;
+        """)
+        return [dict(row) for row in cursor.fetchall()]
     finally:
         conn.close()
 
@@ -1923,7 +1532,6 @@ def verify_incident_cluster(
     verified_by_user_id: int,
     db_path: Optional[str] = None
 ) -> Dict[str, Any]:
-    numeric_id = int(cluster_id) if str(cluster_id).isdigit() else -1
     conn = get_db_connection(db_path)
     try:
         cursor = conn.cursor()
@@ -1931,11 +1539,11 @@ def verify_incident_cluster(
             SELECT id, user_id, hazard_type, severity
             FROM incident_reports
             WHERE (cluster_id = ? OR id = ?) AND status = 'pending';
-        """, (str(cluster_id), numeric_id))
+        """, (cluster_id, cluster_id))
         reports = cursor.fetchall()
         
         if not reports:
-            cursor.execute("SELECT id FROM incident_reports WHERE cluster_id = ? OR id = ?;", (str(cluster_id), numeric_id))
+            cursor.execute("SELECT id FROM incident_reports WHERE cluster_id = ? OR id = ?;", (cluster_id, cluster_id))
             if cursor.fetchone():
                 return {"success": False, "error": "Incident cluster has already been verified or rejected."}
             return {"success": False, "error": "Incident cluster not found."}
@@ -1983,7 +1591,6 @@ def reject_incident_cluster(
     reason: str = "False Alarm / Duplicate",
     db_path: Optional[str] = None
 ) -> Dict[str, Any]:
-    numeric_id = int(cluster_id) if str(cluster_id).isdigit() else -1
     conn = get_db_connection(db_path)
     try:
         cursor = conn.cursor()
@@ -1991,11 +1598,11 @@ def reject_incident_cluster(
             SELECT id, user_id, hazard_type, severity
             FROM incident_reports
             WHERE (cluster_id = ? OR id = ?) AND status = 'pending';
-        """, (str(cluster_id), numeric_id))
+        """, (cluster_id, cluster_id))
         reports = cursor.fetchall()
         
         if not reports:
-            cursor.execute("SELECT id FROM incident_reports WHERE cluster_id = ? OR id = ?;", (str(cluster_id), numeric_id))
+            cursor.execute("SELECT id FROM incident_reports WHERE cluster_id = ? OR id = ?;", (cluster_id, cluster_id))
             if cursor.fetchone():
                 return {"success": False, "error": "Incident cluster is already processed."}
             return {"success": False, "error": "Incident cluster not found."}
@@ -2036,7 +1643,6 @@ def resolve_incident_cluster(
     db_path: Optional[str] = None
 ) -> Dict[str, Any]:
     """Mark an active or verified incident cluster as resolved/cleared once the disaster site is safe."""
-    numeric_id = int(cluster_id) if str(cluster_id).isdigit() else -1
     conn = get_db_connection(db_path)
     try:
         cursor = conn.cursor()
@@ -2044,11 +1650,11 @@ def resolve_incident_cluster(
             SELECT id, user_id, hazard_type, severity, status
             FROM incident_reports
             WHERE (cluster_id = ? OR id = ?) AND status IN ('pending', 'verified');
-        """, (str(cluster_id), numeric_id))
+        """, (cluster_id, cluster_id))
         reports = cursor.fetchall()
         
         if not reports:
-            cursor.execute("SELECT id, status FROM incident_reports WHERE cluster_id = ? OR id = ?;", (str(cluster_id), numeric_id))
+            cursor.execute("SELECT id, status FROM incident_reports WHERE cluster_id = ? OR id = ?;", (cluster_id, cluster_id))
             row = cursor.fetchone()
             if row:
                 return {"success": False, "error": f"Incident is already {row['status']}."}
@@ -2314,28 +1920,16 @@ def get_authority_metrics(db_path: Optional[str] = None) -> Dict[str, Any]:
 
 
 def save_emergency_broadcast(record: Dict[str, Any], db_path: Optional[str] = None) -> bool:
-    """Persist an emergency broadcast record into database (compatible with SQLite and PostgreSQL)."""
+    """Persist an emergency broadcast record into SQLite database."""
     conn = get_db_connection(db_path)
     try:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO emergency_broadcasts (
+            INSERT OR REPLACE INTO emergency_broadcasts (
                 broadcast_id, hazard_type, lat, lng, radius_km,
                 alert_en, alert_ml, recipients_count, sender,
                 telegram_link, whatsapp_link, sent_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (broadcast_id) DO UPDATE SET
-                hazard_type = excluded.hazard_type,
-                lat = excluded.lat,
-                lng = excluded.lng,
-                radius_km = excluded.radius_km,
-                alert_en = excluded.alert_en,
-                alert_ml = excluded.alert_ml,
-                recipients_count = excluded.recipients_count,
-                sender = excluded.sender,
-                telegram_link = excluded.telegram_link,
-                whatsapp_link = excluded.whatsapp_link,
-                sent_at = excluded.sent_at;
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """, (
             record.get("broadcast_id"),
             record.get("hazard_type", "slope_movement"),
@@ -2391,16 +1985,12 @@ def get_persisted_emergency_broadcasts(hours_window: float = 24.0, limit: int = 
         return broadcasts
     except Exception as e:
         print(f"[ERROR] Failed to fetch persisted broadcasts: {e}")
-        return []
     finally:
         conn.close()
 
 
 def get_database_info(db_path: Optional[str] = None) -> Dict[str, Any]:
-    """Return runtime diagnostic telemetry about the connected database."""
-    is_pg = is_postgres_configured(db_path)
-    engine_name = "PostgreSQL (Supabase)" if is_pg else "SQLite (Local File)"
-    
+    """Return runtime diagnostic telemetry about the connected SQLite database."""
     conn = get_db_connection(db_path)
     try:
         cursor = conn.cursor()
@@ -2411,8 +2001,8 @@ def get_database_info(db_path: Optional[str] = None) -> Dict[str, Any]:
         audit_count = cursor.execute("SELECT COUNT(*) AS c FROM audit_logs;").fetchone()["c"]
         
         return {
-            "engine": engine_name,
-            "is_cloud_supabase": is_pg,
+            "engine": "SQLite (Local File)",
+            "is_cloud_supabase": False,
             "connected": True,
             "tables": {
                 "users": users_count,
@@ -2424,8 +2014,8 @@ def get_database_info(db_path: Optional[str] = None) -> Dict[str, Any]:
         }
     except Exception as e:
         return {
-            "engine": engine_name,
-            "is_cloud_supabase": is_pg,
+            "engine": "SQLite (Local File)",
+            "is_cloud_supabase": False,
             "connected": False,
             "error": str(e)
         }
@@ -2436,7 +2026,4 @@ def get_database_info(db_path: Optional[str] = None) -> Dict[str, Any]:
 if __name__ == "__main__":
     print("[INFO] Initializing TerraRisk AI Database...")
     init_db()
-    if is_postgres_configured():
-        print("[OK] Database verified: Connected to Supabase / PostgreSQL cloud instance.")
-    else:
-        print(f"[OK] Database verified: Connected to SQLite at {DEFAULT_DB_PATH}")
+    print(f"[OK] Database successfully verified at: {DEFAULT_DB_PATH}")

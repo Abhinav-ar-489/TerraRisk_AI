@@ -24,7 +24,6 @@ WORKDIR /app
 # Install runtime dependencies (OpenMP for XGBoost, libgl for Pillow)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
-    libpq5 \
     curl \
     && rm -rf /var/lib/apt/lists/*
 

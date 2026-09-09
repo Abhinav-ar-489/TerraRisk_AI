@@ -526,8 +526,8 @@ export default function App() {
   useEffect(() => {
     const isAdmin = Boolean(user && (user.role === 'Authority_Admin' || user.role === 'Admin'));
     const timer = setTimeout(() => {
-      setShowShelters(!isAdmin);
-      setShowIncidents(!isAdmin);
+      setShowShelters(true);
+      setShowIncidents(true);
       setShowHotspots(!isAdmin);
       setShowHeatmap(!isAdmin);
       setProximityScope(isAdmin ? 'state' : 'local');
@@ -741,7 +741,7 @@ export default function App() {
     localStorage.setItem('terrarisk_token', newToken);
     localStorage.setItem('terrarisk_user', JSON.stringify(newUser));
 
-    // When citizen or volunteer logs in, immediately request live GPS coordinates to sync map and weather forecast
+    // When citizen logs in, immediately request live GPS coordinates to sync map and weather forecast
     if (newUser && newUser.role !== 'Authority_Admin') {
       setTimeout(() => {
         requestDeviceLocation(true);
@@ -851,28 +851,42 @@ export default function App() {
   const handleStartReportHazard = () => {
     if (!token || !user) {
       setIsAuthModalOpen(true);
-      triggerToast('Please sign in with your citizen/volunteer profile to report hazards.', 'info');
+      triggerToast('Please sign in with your citizen profile to report hazards.', 'info');
       return;
     }
+    // Pre-populate with live GPS or selected node coordinates
+    const initialCoords = deviceCoords
+      ? { lat: deviceCoords.lat, lng: deviceCoords.lng, isGps: true }
+      : selectedNode?.lat
+        ? { lat: selectedNode.lat, lng: selectedNode.lng, isGps: false }
+        : { lat: 11.5542, lng: 76.1308, isGps: false };
+
+    setDroppedPinCoords(initialCoords);
+    setIsReportModalOpen(true);
+    setPinDropMode(false);
+  };
+
+  const handlePickOnMap = () => {
+    setIsReportModalOpen(false);
     setPinDropMode(true);
-    triggerToast('📍 Pin-Drop Mode Active: Click anywhere on the map to mark the hazard.', 'info');
+    triggerToast('📍 Pin-Drop Mode Active: Click anywhere on the map to mark the hazard location.', 'info');
   };
 
   // Phase 4: Open Authority Command Suite
   const handleOpenAuthoritySuite = async () => {
-    if (token && user && (user.role === 'Authority_Admin' || user.role === 'Volunteer')) {
+    if (token && user && user.role === 'Authority_Admin') {
       setIsAuthorityPortalOpen(true);
       return;
     }
 
     if (!user) {
       setIsAuthModalOpen(true);
-      triggerToast("Please sign in with your Authority Officer or Volunteer account.", "info");
+      triggerToast("Please sign in with your Authority Officer account.", "info");
       return;
     }
 
     // Standard Citizen attempted to access command suite
-    triggerToast("Access Restricted: Command Center is restricted to KSDMA Disaster Officers & Volunteers.", "warning");
+    triggerToast("Access Restricted: Command Center is restricted to KSDMA Disaster Officers.", "warning");
   };
 
   const dominantWeather = forecastData[0]?.condition || "clear";
@@ -972,8 +986,8 @@ export default function App() {
             <div className="header-user-badge-minimal" onClick={() => setIsSidebarOpen(true)} title="View Profile & Settings">
               <div className="user-mini-avatar">{user.name.charAt(0).toUpperCase()}</div>
               <span className="user-minimal-name">{user.name.split(' ')[0]}</span>
-              <span className={`user-role-tag ${user.role.toLowerCase()}`}>
-                {user.role === 'Authority_Admin' ? 'ADMIN' : user.role === 'Volunteer' ? 'VOLUNTEER' : 'CITIZEN'}
+              <span className={`user-role-tag ${user.role === 'Authority_Admin' ? 'admin' : 'citizen'}`}>
+                {user.role === 'Authority_Admin' ? 'ADMIN' : 'CITIZEN'}
               </span>
             </div>
           ) : (
@@ -1267,13 +1281,13 @@ export default function App() {
                 <Circle
                   center={[activeRoutePlan.start.lat, activeRoutePlan.start.lng]}
                   radius={350}
-                  pathOptions={{ color: '#38BDF8', fillColor: '#38BDF8', fillOpacity: 0.8 }}
+                  pathOptions={{ color: '#38BDF8', fillColor: '#38BDF8', fillOpacity: 0.8, interactive: false }}
                 />
                 {/* Destination Shelter Circle Ring */}
                 <Circle
                   center={[activeRoutePlan.destination_shelter.lat, activeRoutePlan.destination_shelter.lng]}
                   radius={450}
-                  pathOptions={{ color: '#30D158', fillColor: '#30D158', fillOpacity: 0.8 }}
+                  pathOptions={{ color: '#30D158', fillColor: '#30D158', fillOpacity: 0.8, interactive: false }}
                 />
                 {/* Avoided Hazard Warning Rings */}
                 {activeRoutePlan.avoided_hazards?.map((h, i) => (
@@ -1281,7 +1295,7 @@ export default function App() {
                     key={`avoided_hz_${i}`}
                     center={[h.lat, h.lng]}
                     radius={h.radius_km * 1000}
-                    pathOptions={{ color: '#EF4444', fillColor: '#EF4444', fillOpacity: 0.12, dashArray: '4, 6' }}
+                    pathOptions={{ color: '#EF4444', fillColor: '#EF4444', fillOpacity: 0.12, dashArray: '4, 6', interactive: false }}
                   />
                 ))}
               </>
@@ -1300,7 +1314,8 @@ export default function App() {
                       fillColor: '#EF4444',
                       fillOpacity: 0.16,
                       weight: 2,
-                      dashArray: '4, 6'
+                      dashArray: '4, 6',
+                      interactive: false
                     }}
                   >
                     <Tooltip direction="top">
@@ -1363,7 +1378,7 @@ export default function App() {
                 <Marker position={[spot.lat, spot.lng]} icon={createHotspotIcon()}>
                   <Tooltip direction="top"><span style={{ color: 'var(--text-primary)', fontWeight: '500', fontSize: '11px' }}>Historic: {spot.name}</span></Tooltip>
                 </Marker>
-                <Circle center={[spot.lat, spot.lng]} radius={10000} pathOptions={{ color: 'var(--accent-red)', fillColor: 'var(--accent-red)', fillOpacity: 0.03, weight: 1 }} />
+                <Circle center={[spot.lat, spot.lng]} radius={10000} pathOptions={{ color: 'var(--accent-red)', fillColor: 'var(--accent-red)', fillOpacity: 0.03, weight: 1, interactive: false }} />
               </Fragment>
             ))}
 
@@ -1426,7 +1441,7 @@ export default function App() {
                 <Circle
                   center={[deviceCoords.lat, deviceCoords.lng]}
                   radius={Math.max(150, deviceCoords.accuracy || 150)}
-                  pathOptions={{ color: '#0EA5E9', fillColor: '#0EA5E9', fillOpacity: 0.12, weight: 1.5 }}
+                  pathOptions={{ color: '#0EA5E9', fillColor: '#0EA5E9', fillOpacity: 0.12, weight: 1.5, interactive: false }}
                 />
               </>
             )}
@@ -1541,7 +1556,15 @@ export default function App() {
         coordinates={droppedPinCoords}
         user={user}
         token={token}
-        onReportSuccess={() => fetchActiveIncidents()}
+        onPickOnMap={handlePickOnMap}
+        onReportSuccess={(reportData) => {
+          setShowIncidents(true);
+          fetchActiveIncidents();
+          const target = reportData?.incident || droppedPinCoords;
+          if (target && mapRef.current) {
+            mapRef.current.flyTo([target.lat, target.lng], 13, { animate: true, duration: 1.0 });
+          }
+        }}
         triggerToast={triggerToast}
       />
 

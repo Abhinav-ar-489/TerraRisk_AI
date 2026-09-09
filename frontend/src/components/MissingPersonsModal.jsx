@@ -26,7 +26,7 @@ export default function MissingPersonsModal({
   const [submitting, setSubmitting] = useState(false);
 
   // Status update modal / dropdown
-  const isAuthorityOrVolunteer = user?.role === 'Authority_Admin' || user?.role === 'Volunteer';
+  const isAuthority = user?.role === 'Authority_Admin';
 
   const fetchMissingPersons = useCallback(async () => {
     setLoading(true);
@@ -267,7 +267,7 @@ export default function MissingPersonsModal({
                       </div>
 
                       {/* Authority Actions to match with Camp */}
-                      {isAuthorityOrVolunteer && !isSafe && (
+                      {isAuthority && !isSafe && (
                         <div className="authority-match-strip">
                           <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Mark as Located at:</span>
                           <select

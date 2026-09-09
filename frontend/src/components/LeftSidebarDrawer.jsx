@@ -122,8 +122,8 @@ export default function LeftSidebarDrawer({
             </button>
           </div>
 
-          {/* Group 3: Command Suite (Strictly restricted to Authority Officers & Volunteers) */}
-          {user && (user.role === 'Authority_Admin' || user.role === 'Volunteer') && (
+          {/* Group 3: Command Suite (Strictly restricted to Authority Officers) */}
+          {user && user.role === 'Authority_Admin' && (
             <>
               <div className="sidebar-section-title">
                 <Shield size={12} color="#3B82F6" />
@@ -196,8 +196,8 @@ export default function LeftSidebarDrawer({
               <div className="sidebar-user-info">
                 <div className="sidebar-user-name-row">
                   <span className="sidebar-user-name">{user.name}</span>
-                  <span className={`user-role-tag ${user.role.toLowerCase()}`}>
-                    {user.role === 'Authority_Admin' ? 'ADMIN' : user.role === 'Volunteer' ? 'VOLUNTEER' : 'CITIZEN'}
+                  <span className={`user-role-tag ${user.role === 'Authority_Admin' ? 'admin' : 'citizen'}`}>
+                    {user.role === 'Authority_Admin' ? 'ADMIN' : 'CITIZEN'}
                   </span>
                 </div>
                 <span className="sidebar-credibility-text" style={{ color: isVerified ? '#30D158' : '#94A3B8', display: 'flex', alignItems: 'center', gap: '4px' }}>

@@ -15,7 +15,7 @@ export default function ShelterDetailModal({
   const available = Math.max(0, capacity - occupied);
   const occupancyPct = Math.round((occupied / capacity) * 100);
 
-  const isAuthorityOrVolunteer = user && (user.role === 'Authority_Admin' || user.role === 'Volunteer');
+  const isAuthority = user && user.role === 'Authority_Admin';
 
   return (
     <div className="auth-modal-backdrop" onClick={onClose}>
@@ -103,7 +103,7 @@ export default function ShelterDetailModal({
               </a>
             )}
 
-            {isAuthorityOrVolunteer && (
+            {isAuthority && (
               <button
                 onClick={() => {
                   onClose();

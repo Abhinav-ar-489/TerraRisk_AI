@@ -65,13 +65,25 @@ class TerraRiskFullSystemTest(unittest.TestCase):
         cls.admin_token = admin_login.get_json().get("token")
         cls.admin_user = admin_login.get_json().get("user")
 
-        # 2. Login Volunteer
+        # 2. Login Volunteer (or register if not seeded)
         vol_login = cls.client.post('/api/auth/login', json={
             "phone": "+919888800000",
             "password": "Volunteer@2026!"
         })
-        cls.volunteer_token = vol_login.get_json().get("token")
-        cls.volunteer_user = vol_login.get_json().get("user")
+        vol_data = vol_login.get_json() or {}
+        if not vol_data.get("token"):
+            vol_login = cls.client.post('/api/auth/register', json={
+                "name": "Naveen Volunteer",
+                "phone": "+919888800000",
+                "password": "Volunteer@2026!",
+                "role": "Volunteer",
+                "district": "Wayanad",
+                "lat": 11.5560,
+                "lng": 76.1320
+            })
+            vol_data = vol_login.get_json() or {}
+        cls.volunteer_token = vol_data.get("token")
+        cls.volunteer_user = vol_data.get("user")
 
         # 3. Register / Login Citizen
         import secrets

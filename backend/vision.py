@@ -198,10 +198,11 @@ def interpret_keyword_response(raw_output: str, reported_hazard: str, default_en
 def _query_gemini_vision(img_bytes: bytes, reported_hazard: str, api_key: str) -> Optional[Dict[str, Any]]:
     """Query Google Gemini Multimodal Vision API directly with adversarial skeptical instructions."""
     gemini_models = [
-        "gemini-3.7-flash",
-        "gemini-3.8-flash",
-        "gemini-flash-latest",
-        "gemini-flash-lite-latest"
+        "gemini-flash-lite-latest",
+        "gemini-3.1-flash-lite",
+        "gemini-3-flash-preview",
+        "gemini-3.6-flash",
+        "gemini-3.7-flash"
     ]
     img_b64 = base64.b64encode(img_bytes).decode('utf-8')
     
@@ -263,21 +264,29 @@ def _query_gemini_vision(img_bytes: bytes, reported_hazard: str, api_key: str) -
     for model_name in gemini_models:
         try:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
-            resp = requests.post(url, json=payload, timeout=8.5)
+            resp = requests.post(url, json=payload, timeout=12.0)
             if resp.status_code == 200:
                 data = resp.json()
-                cand = data.get("candidates", [])[0]
-                content = cand.get("content", {}).get("parts", [])[0].get("text", "{}")
-                return interpret_keyword_response(content, reported_hazard, default_engine=f"google-{model_name}")
+                cands = data.get("candidates", [])
+                if not cands:
+                    continue
+                parts = cands[0].get("content", {}).get("parts", [])
+                content = "".join(p.get("text", "") for p in parts)
+                if not content.strip():
+                    continue
+                res = interpret_keyword_response(content, reported_hazard, default_engine=f"google-{model_name}")
+                print(f"[VISION AI] Verified via Google {model_name} -> Genuine: {res['is_genuine_hazard']} ({res['confidence_score']*100:.0f}%)")
+                return res
             elif resp.status_code == 429:
-                # Quota rate-limited on this model tier, seamlessly continue to next candidate
+                print(f"[VISION AI] Model {model_name} quota exceeded (429). Attempting fallback...")
                 continue
             elif resp.status_code == 404:
-                # Model name not supported in this endpoint version
                 continue
             else:
+                print(f"[VISION AI] Model {model_name} returned status {resp.status_code}. Trying next candidate...")
                 continue
-        except Exception:
+        except Exception as e:
+            print(f"[VISION AI] Model {model_name} network notice: {e}. Trying next candidate...")
             continue
 
     return None

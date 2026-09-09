@@ -210,6 +210,21 @@ class TestComputerVisionFalsePositives(unittest.TestCase):
             )
             self.assertTrue(res["is_spam"])
 
+    def test_09_real_broken_road_confirmed_as_genuine_hazard(self):
+        """Real broken road / fractured pavement must be confirmed as a genuine hazard."""
+        broken_road_path = os.path.join(os.path.dirname(__file__), "test_broken_asphalt.jpg")
+        if os.path.exists(broken_road_path):
+            with open(broken_road_path, "rb") as f:
+                img_bytes = f.read()
+            res = analyze_hazard_image(img_bytes, "blocked_road")
+            self.assertTrue(
+                res["is_genuine_hazard"],
+                f"Broken road photo was incorrectly rejected by {res['engine']}!"
+            )
+            self.assertFalse(res["is_spam"])
+            self.assertIn("TRUE", res["keyword"])
+            self.assertGreaterEqual(res["confidence_score"], 0.75)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

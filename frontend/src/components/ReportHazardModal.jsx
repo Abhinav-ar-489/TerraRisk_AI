@@ -124,6 +124,31 @@ export default function ReportHazardModal({ isOpen, onClose, coordinates, user, 
   const lng = reportLng;
   const selectedSeverityObj = SEVERITY_LEVELS.find(s => s.level === severity) || SEVERITY_LEVELS[2];
 
+  const runVisionAnalysis = async (imgB64, type) => {
+    if (!imgB64) return;
+    setCvAnalyzing(true);
+    try {
+      const res = await api.post('/api/vision/analyze', {
+        image: imgB64,
+        hazard_type: type
+      });
+      if (res.data?.success && res.data.analysis) {
+        setCvFeedback(res.data.analysis);
+        // If AI confirmed hazard under a different category, auto-align if user kept default
+        if (res.data.analysis.is_genuine_hazard && res.data.analysis.detected_hazard && res.data.analysis.detected_hazard !== type) {
+          const det = res.data.analysis.detected_hazard;
+          if (HAZARD_CATEGORIES.some(c => c.id === det)) {
+            setHazardType(det);
+          }
+        }
+      }
+    } catch {
+      console.log("CV pre-analysis skipped.");
+    } finally {
+      setCvAnalyzing(false);
+    }
+  };
+
   const handlePhotoSelect = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -132,26 +157,17 @@ export default function ReportHazardModal({ isOpen, onClose, coordinates, user, 
       const b64 = await compressImage(file);
       setPhotoBase64(b64);
       setPhotoPreview(b64);
-
-      // Trigger background CV verification preview
-      setCvAnalyzing(true);
-      setCvFeedback(null);
-      try {
-        const res = await api.post('/api/vision/analyze', {
-          image: b64,
-          hazard_type: hazardType
-        });
-        if (res.data?.success) {
-          setCvFeedback(res.data.analysis);
-        }
-      } catch {
-        console.log("CV pre-analysis skipped.");
-      } finally {
-        setCvAnalyzing(false);
-      }
+      await runVisionAnalysis(b64, hazardType);
     } catch (err) {
       console.error("Image compression error:", err);
       setError("Failed to process image. Please try another photo.");
+    }
+  };
+
+  const handleCategoryChange = (newType) => {
+    setHazardType(newType);
+    if (photoBase64) {
+      runVisionAnalysis(photoBase64, newType);
     }
   };
 
@@ -301,7 +317,7 @@ export default function ReportHazardModal({ isOpen, onClose, coordinates, user, 
                 return (
                   <div
                     key={cat.id}
-                    onClick={() => setHazardType(cat.id)}
+                    onClick={() => handleCategoryChange(cat.id)}
                     className={`hazard-cat-card ${isSelected ? 'selected' : ''}`}
                     style={{ borderColor: isSelected ? cat.color : 'var(--border-color)' }}
                   >

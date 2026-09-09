@@ -176,6 +176,12 @@ def interpret_keyword_response(raw_output: str, reported_hazard: str, default_en
             # Conservative default: if ambiguous, mark false
             is_gen = False if (has_specific_false or has_generic_false) else bool(parsed.get("is_genuine_hazard", False))
 
+    # Cross-category alignment: if confirmed and model identified a specific valid hazard type
+    det_haz = reported_hazard
+    if is_gen and parsed.get("detected_hazard") in INCIDENT_KEYWORD_RULES:
+        det_haz = parsed["detected_hazard"]
+        rule = INCIDENT_KEYWORD_RULES[det_haz]
+
     matched_keyword = rule["true_keyword"] if is_gen else rule["false_keyword"]
     status_label = rule["status_label_true"] if is_gen else rule["status_label_false"]
     conf = float(parsed.get("confidence_score", 0.92 if is_gen else 0.08))
@@ -187,7 +193,7 @@ def interpret_keyword_response(raw_output: str, reported_hazard: str, default_en
         "keyword": matched_keyword,
         "status_text": status_label,
         "confidence_score": round(conf, 2),
-        "detected_hazard": reported_hazard if is_gen else "non_hazard_scene",
+        "detected_hazard": det_haz if is_gen else "non_hazard_scene",
         "suggested_severity": sev,
         "ai_summary": summary,
         "is_spam": not is_gen,
@@ -196,7 +202,7 @@ def interpret_keyword_response(raw_output: str, reported_hazard: str, default_en
 
 
 def _query_gemini_vision(img_bytes: bytes, reported_hazard: str, api_key: str) -> Optional[Dict[str, Any]]:
-    """Query Google Gemini Multimodal Vision API directly with adversarial skeptical instructions."""
+    """Query Google Gemini Multimodal Vision API directly with balanced forensic disaster verification instructions."""
     gemini_models = [
         "gemini-flash-lite-latest",
         "gemini-3.1-flash-lite",
@@ -213,31 +219,30 @@ def _query_gemini_vision(img_bytes: bytes, reported_hazard: str, api_key: str) -
     system_instruction = (
         f"You are the Official Kerala State Disaster Management Authority (KSDMA) Forensic Disaster Vision Engine.\n"
         f"A citizen submitted this photo claiming category: '{reported_hazard}' ({rule['title']}).\n\n"
-        f"CORE PRINCIPLE — ADVERSARIAL SKEPTICISM (DEFAULT TO REJECTION):\n"
-        f"Treat every incoming image as a NON-HAZARD or FALSE ALARM by default. Do NOT assume the citizen's report is accurate.\n"
-        f"You must ONLY classify this as a genuine hazard if you observe undeniable, catastrophic physical disaster evidence in the frame.\n\n"
-        f"MANDATORY REJECTIONS (MUST classify with is_genuine_hazard: false and keyword [{false_kw}]):\n"
-        f"1. Non-disaster indoor scenes: rooms, walls, desks, laptops, monitors, office spaces, furniture, ceilings, home interiors, food, clothes, items.\n"
-        f"2. People & objects: Selfies, portraits, human faces, pets, animals, vehicles, tools, machinery, construction vehicles.\n"
-        f"3. Graphics & documents: Screenshots, UI diagrams, text documents, paper, drawings, digital artwork, icons, memes.\n"
-        f"4. Safe outdoor scenes: Pristine roads, clear highways with painted lines, normal green lawns, gardens, trees, calm rivers, clouds.\n"
-        f"5. Minor ordinary municipal wear: Small hairline pavement cracks, ordinary potholes, normal rain puddles, expansion joints, normal sidewalk lines.\n"
-        f"6. Ambiguous / Inconclusive / Low Quality: Blurry, dark, low-resolution, or ambiguous photos MUST BE REJECTED as false.\n\n"
-        f"STRICT CRITERIA FOR GENUINE DISASTER HAZARDS (ONLY classify with is_genuine_hazard: true and keyword [{true_kw}]):\n"
-        f"- mud_crack: Deep geological tension fractures, ground rupture, or road split (>10 cm wide) on earth or asphalt.\n"
-        f"- rockfall: Heavy boulder tumble, massive rock debris avalanche, or scree collapse covering slope or transit lanes.\n"
-        f"- stream_overflow: Turbid torrent overflowing riverbanks, submerging roadways, or catastrophic culvert blowout.\n"
-        f"- blocked_road: Roadway completely obstructed and impassable due to landslide mud, fallen boulders, or collapsed hillside.\n"
-        f"- slope_movement: Active mass wasting escarpment, rotational hill slip, hillside subsidence, or mudflow.\n\n"
-        f"MANDATORY OUTPUT FORMAT:\n"
-        f"Respond strictly in valid JSON matching this schema:\n"
+        f"VERIFICATION DIRECTIVE:\n"
+        f"Differentiate genuine field hazards, road damage, and geological threats from non-hazard false alarms (indoor rooms, selfies, screenshots, pristine undamaged roads).\n\n"
+        f"MANDATORY REJECTIONS (Classify with is_genuine_hazard: false and keyword [{false_kw}]):\n"
+        f"1. Non-disaster indoor scenes: rooms, walls, desks, laptops, monitors, office spaces, furniture, ceilings, home interiors, food, clothes, household items.\n"
+        f"2. People & pets: Selfies, portraits, human faces, body shots, pets, domestic animals, undamaged vehicles.\n"
+        f"3. Graphics & documents: Screenshots, software UI, diagrams, text documents, paper, drawings, digital artwork, icons, memes.\n"
+        f"4. Pristine undamaged roads: Completely smooth, clean paved roads or highways with clear painted lane lines and ZERO damage or obstruction.\n"
+        f"5. Safe outdoor nature: Peaceful green lawns, manicured gardens, calm clear rivers, blue skies, undisturbed foliage.\n"
+        f"6. Blank / unidentifiable / pitch dark frames.\n\n"
+        f"GENUINE HAZARDS TO CONFIRM (Classify with is_genuine_hazard: true and keyword [{true_kw}]):\n"
+        f"- blocked_road: Broken road surface, cracked or collapsed asphalt, road cave-in, sinkhole, fractured pavement, potholes, washed-out shoulder, landslide mud, fallen boulders, fallen trees, floodwaters, or transit obstruction.\n"
+        f"- mud_crack: Ground fissures, tension fractures, pavement cracks, road splitting, soil rupture, or terrain subsidence.\n"
+        f"- rockfall: Boulders, rock tumble, scree avalanche, or loose stone debris scattered on road or hillside.\n"
+        f"- stream_overflow: Turbid torrent overflowing riverbanks, flooded roadway, submerged culverts, or water inundation.\n"
+        f"- slope_movement: Hillside landslide, mudflow, active earth slip, embankment collapse, retaining wall failure, or mass wasting.\n"
+        f"* CROSS-CATEGORY RULE: If the photo exhibits real-world road breakage, cracked asphalt, pavement failure, or ground rupture, you MUST CONFIRM it as a genuine hazard (is_genuine_hazard: true) even if reported under either 'blocked_road' or 'mud_crack'.\n\n"
+        f"MANDATORY OUTPUT FORMAT (Valid JSON only):\n"
         f"{{\n"
         f"  \"keyword\": \"{true_kw}\" or \"{false_kw}\",\n"
         f"  \"is_genuine_hazard\": true or false,\n"
-        f"  \"confidence_score\": <float 0.85 to 0.99 for genuine disaster, 0.02 to 0.20 for non-hazard/rejected>,\n"
+        f"  \"confidence_score\": <float 0.80 to 0.98 for genuine hazard, 0.02 to 0.20 for rejected>,\n"
         f"  \"detected_hazard\": \"{reported_hazard}\" or \"non_hazard_scene\",\n"
         f"  \"suggested_severity\": <int 1 to 5>,\n"
-        f"  \"ai_summary\": \"<Concise 1-2 sentence forensic observation detailing disaster evidence or specific reason for rejection>\"\n"
+        f"  \"ai_summary\": \"<Concise 1-2 sentence observation detailing the hazard damage or reason for rejection>\"\n"
         f"}}"
     )
 
@@ -293,7 +298,7 @@ def _query_gemini_vision(img_bytes: bytes, reported_hazard: str, api_key: str) -
 
 
 def _query_openai_or_groq_vision(img_bytes: bytes, reported_hazard: str, api_key: str, is_groq: bool = False) -> Optional[Dict[str, Any]]:
-    """Query OpenAI GPT-4o-mini or Groq Llama-3.2-Vision with strict adversarial anti-false-positive instructions."""
+    """Query OpenAI GPT-4o-mini or Groq Llama-3.2-Vision with balanced disaster verification instructions."""
     try:
         url = "https://api.groq.com/openai/v1/chat/completions" if is_groq else "https://api.openai.com/v1/chat/completions"
         model_name = "llama-3.2-11b-vision-preview" if is_groq else "gpt-4o-mini"
@@ -308,9 +313,9 @@ def _query_openai_or_groq_vision(img_bytes: bytes, reported_hazard: str, api_key
         
         prompt_text = (
             f"You are a forensic disaster geotechnical vision classifier for KSDMA. "
-            f"Citizen claimed incident: '{reported_hazard}'. Default to FALSE (non-hazard).\n"
-            f"Strictly classify as FALSE if image is an indoor room, desk, selfie, screenshot, vehicle, pristine road, ordinary lawn, or minor wear.\n"
-            f"Only classify as TRUE if there is unmistakable catastrophic mass wasting, landslide, rockfall, road obstruction, or flash flood.\n"
+            f"Citizen claimed incident: '{reported_hazard}'.\n"
+            f"Strictly classify as FALSE (non-hazard) if image is an indoor room, desk, selfie, screenshot, pristine undamaged road with clear lines, or calm lawn.\n"
+            f"Classify as TRUE (genuine hazard) if image shows broken road, cracked/collapsed asphalt, road cave-in, potholes, landslide, rockfall, flood, or mud rupture.\n"
             f"If genuine hazard, output keyword [{rule['true_keyword']}] and is_genuine_hazard: true.\n"
             f"If non-hazard, output keyword [{rule['false_keyword']}] and is_genuine_hazard: false.\n"
             f"Return JSON: {{\"keyword\": string, \"is_genuine_hazard\": bool, \"detected_hazard\": string, \"confidence_score\": float, \"suggested_severity\": int, \"ai_summary\": string}}."
@@ -342,7 +347,7 @@ def _query_openai_or_groq_vision(img_bytes: bytes, reported_hazard: str, api_key
 
 
 def _query_ollama_vision(image_b64: str, reported_hazard: str) -> Optional[Dict[str, Any]]:
-    """Attempt zero-shot vision inference against local Ollama vision models with strict adversarial instructions."""
+    """Attempt zero-shot vision inference against local Ollama vision models with balanced instructions."""
     model = _get_active_ollama_vision_model()
     if not model:
         return None
@@ -350,8 +355,8 @@ def _query_ollama_vision(image_b64: str, reported_hazard: str) -> Optional[Dict[
     rule = INCIDENT_KEYWORD_RULES.get(reported_hazard, INCIDENT_KEYWORD_RULES["mud_crack"])
     system_prompt = (
         f"You are a forensic geotechnical disaster vision classifier for KSDMA. "
-        f"Default to FALSE. Strictly classify as FALSE if image is indoor, room, desk, selfie, screenshot, vehicle, or safe scene. "
-        f"Only classify as TRUE if undeniable catastrophic landslide, rockfall, flood, or mud rupture is visible. "
+        f"Strictly classify as FALSE if image is an indoor room, desk, selfie, screenshot, pristine undamaged road, or safe scene. "
+        f"Classify as TRUE if broken road, cracked asphalt, landslide, rockfall, flood, or ground rupture is visible. "
         f"If genuine hazard, output keyword [{rule['true_keyword']}] with is_genuine_hazard: true. "
         f"If non-hazard, output keyword [{rule['false_keyword']}] with is_genuine_hazard: false. "
         f"Return JSON: {{\"keyword\": string, \"is_genuine_hazard\": bool, \"detected_hazard\": string, \"confidence_score\": float, \"suggested_severity\": int, \"ai_summary\": string}}."
